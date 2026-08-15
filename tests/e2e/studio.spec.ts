@@ -254,6 +254,11 @@ test("Replay exposes camera controls and current EEF orientation without result 
   });
   await expect(taskCues).toBeVisible();
   await expect(taskCues).toHaveAttribute("aria-pressed", "true");
+  const taskCueLegend = page.getByTestId("task-cue-legend");
+  await expect(taskCueLegend).toContainText("Yellow: manipulated");
+  await expect(taskCueLegend).toContainText("Blue: destination");
+  await expect(taskCueLegend).toContainText("White: both");
+  await expect(page.getByText("Outline: destination")).toHaveCount(0);
   await taskCues.click();
   await expect(taskCues).toHaveAttribute("aria-pressed", "false");
   await taskCues.click();

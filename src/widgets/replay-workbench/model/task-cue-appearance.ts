@@ -1,15 +1,48 @@
 import * as THREE from "three";
+import type { TaskCueRole } from "./task-cues";
 
-export type ManipulatedCueMaterial = {
+export type TaskCueAppearanceRole = "manipulated" | "destination" | "both";
+
+export type TaskCueMaterial = {
   material: THREE.MeshPhongMaterial;
   baseEmissive: THREE.Color;
   baseIntensity: number;
+  role: TaskCueAppearanceRole;
 };
 
-const manipulatedCueColor = new THREE.Color(0xffb15c);
+export const TASK_CUE_PULSE_PERIOD_SECONDS = 2.5;
 
-export function updateManipulatedTaskCue(
-  binding: ManipulatedCueMaterial,
+const taskCueColors: Record<TaskCueAppearanceRole, THREE.Color> = {
+  manipulated: new THREE.Color(0xffb15c),
+  destination: new THREE.Color(0x62dce9),
+  both: new THREE.Color(0xffffff),
+};
+
+export function taskCueAppearanceRole(roles: ReadonlySet<TaskCueRole>): TaskCueAppearanceRole {
+  if (roles.has("manipulated") && roles.has("destination")) return "both";
+  return roles.has("destination") ? "destination" : "manipulated";
+}
+
+export function createTaskCueMaterialBindings(
+  materials: readonly THREE.MeshPhongMaterial[],
+  roles: ReadonlySet<TaskCueRole>,
+): TaskCueMaterial[] {
+  const role = taskCueAppearanceRole(roles);
+  return materials.map((material) => ({
+    material,
+    baseEmissive: material.emissive.clone(),
+    baseIntensity: material.emissiveIntensity,
+    role,
+  }));
+}
+
+export function taskCuePulsePhase(elapsedSeconds: number, reducedMotion: boolean): number {
+  if (reducedMotion) return 0.5;
+  return Math.sin((elapsedSeconds / TASK_CUE_PULSE_PERIOD_SECONDS) * Math.PI * 2) / 2 + 0.5;
+}
+
+export function updateTaskCueMaterial(
+  binding: TaskCueMaterial,
   enabled: boolean,
   phase: number,
 ): void {
@@ -18,37 +51,7 @@ export function updateManipulatedTaskCue(
     binding.material.emissiveIntensity = binding.baseIntensity;
     return;
   }
-  binding.material.emissive.copy(binding.baseEmissive).lerp(manipulatedCueColor, 0.58);
+  binding.material.emissive.copy(binding.baseEmissive).lerp(taskCueColors[binding.role], 0.58);
   binding.material.emissiveIntensity =
     binding.baseIntensity + 0.08 + THREE.MathUtils.clamp(phase, 0, 1) * 0.14;
-}
-
-export function createDestinationTaskCueOutline(mesh: THREE.Mesh): THREE.LineSegments {
-  const geometry = new THREE.EdgesGeometry(mesh.geometry, 35);
-  const material = new THREE.LineBasicMaterial({
-    color: 0x62dce9,
-    transparent: true,
-    opacity: 0.58,
-    depthTest: true,
-    depthWrite: false,
-    toneMapped: false,
-  });
-  const outline = new THREE.LineSegments(geometry, material);
-  outline.name = `${mesh.name}__task_destination_outline`;
-  outline.renderOrder = 11;
-  outline.userData.parcTaskCueOutline = true;
-  return outline;
-}
-
-export function disposeTaskCueOutline(outline: THREE.LineSegments): void {
-  outline.geometry.dispose();
-  const materials = Array.isArray(outline.material) ? outline.material : [outline.material];
-  for (const material of materials) material.dispose();
-}
-
-export function setTaskCueOutlinesVisible(
-  outlines: readonly THREE.LineSegments[],
-  visible: boolean,
-): void {
-  for (const outline of outlines) outline.visible = visible;
 }

@@ -79,11 +79,10 @@ import {
 } from "../model/replay-context-url";
 import { shouldHideSceneNode } from "../model/scene-visibility";
 import {
-  createDestinationTaskCueOutline,
-  disposeTaskCueOutline,
-  type ManipulatedCueMaterial,
-  setTaskCueOutlinesVisible,
-  updateManipulatedTaskCue,
+  createTaskCueMaterialBindings,
+  type TaskCueMaterial,
+  taskCuePulsePhase,
+  updateTaskCueMaterial,
 } from "../model/task-cue-appearance";
 import { resolveTaskCues, type TaskCueBody, type TaskCueResolution } from "../model/task-cues";
 import {
@@ -540,9 +539,7 @@ function DigitalTwin({
     const clone = gltf.scene.clone(true);
     const cubeBySource = new Map<THREE.Texture, THREE.CubeTexture>();
     const cubeTextures = new Set<THREE.CubeTexture>();
-    const manipulatedMaterials: ManipulatedCueMaterial[] = [];
-    const destinationMeshes: THREE.Mesh[] = [];
-    const destinationOutlines: THREE.LineSegments[] = [];
+    const taskCueMaterials: TaskCueMaterial[] = [];
     const shadows = render?.lights.some((light) => light.active && light.cast_shadow) ?? false;
     clone.traverse((object) => {
       if (shouldHideSceneNode(manifest.scene_schema, object.name)) {
@@ -582,35 +579,20 @@ function DigitalTwin({
       const bodyIndex = object.userData.mujocoBodyIndex as number | undefined;
       const bodyName = bodyIndex == null ? undefined : manifest.body_names[bodyIndex];
       const roles = bodyName ? taskCueRoles.get(bodyName) : undefined;
-      if (roles?.has("manipulated")) {
-        for (const material of converted) {
-          manipulatedMaterials.push({
-            material,
-            baseEmissive: material.emissive.clone(),
-            baseIntensity: material.emissiveIntensity,
-          });
-        }
+      if (roles?.size) {
+        taskCueMaterials.push(...createTaskCueMaterialBindings(converted, roles));
       }
-      if (roles?.has("destination")) destinationMeshes.push(object);
     });
-    for (const mesh of destinationMeshes) {
-      const outline = createDestinationTaskCueOutline(mesh);
-      mesh.add(outline);
-      destinationOutlines.push(outline);
-    }
     clone.userData.parcMujocoCubeTextures = cubeTextures;
-    clone.userData.parcTaskCueMaterials = manipulatedMaterials;
-    clone.userData.parcTaskCueOutlines = destinationOutlines;
+    clone.userData.parcTaskCueMaterials = taskCueMaterials;
     return clone;
   }, [gltf.scene, manifest.body_names, manifest.scene_schema, render, taskCueRoles]);
   useFrame(({ clock }) => {
-    const materials = scene.userData.parcTaskCueMaterials as ManipulatedCueMaterial[] | undefined;
-    const outlines = scene.userData.parcTaskCueOutlines as THREE.LineSegments[] | undefined;
-    const phase = reducedMotion ? 0.5 : (Math.sin(clock.getElapsedTime() * Math.PI * 2) + 1) / 2;
+    const materials = scene.userData.parcTaskCueMaterials as TaskCueMaterial[] | undefined;
+    const phase = taskCuePulsePhase(clock.getElapsedTime(), reducedMotion);
     for (const binding of materials ?? []) {
-      updateManipulatedTaskCue(binding, taskCuesEnabled, phase);
+      updateTaskCueMaterial(binding, taskCuesEnabled, phase);
     }
-    setTaskCueOutlinesVisible(outlines ?? [], taskCuesEnabled);
   });
   useEffect(
     () => () => {
@@ -626,9 +608,6 @@ function DigitalTwin({
           for (const material of materials) material.dispose();
           object.getRenderTarget().dispose();
           if (object.userData.parcOwnsGeometry) object.geometry.dispose();
-        }
-        if (object instanceof THREE.LineSegments && object.userData.parcTaskCueOutline) {
-          disposeTaskCueOutline(object);
         }
       });
       const cubeTextures = scene.userData.parcMujocoCubeTextures as
@@ -766,7 +745,7 @@ function TrajectoryScene({
   ).length;
   const taskCueDescription =
     showTwin && taskCuesEnabled && taskCueBodies.length
-      ? ` Task cues highlight ${manipulatedBodyCount} manipulated bodies with a pulse and ${destinationBodyCount} destination bodies with an outline.`
+      ? ` Task cues pulse ${manipulatedBodyCount} manipulated bodies in yellow and ${destinationBodyCount} destination bodies in blue; bodies with both roles pulse in white.`
       : "";
   return (
     <Canvas
@@ -1670,11 +1649,21 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
                       aria-hidden
                       className="size-2 rounded-full bg-[#ffb15c] shadow-[0_0_7px_2px_rgba(255,177,92,0.5)]"
                     />
-                    Pulsing: manipulated
+                    Yellow: manipulated
                   </span>
                   <span className="inline-flex items-center gap-1">
-                    <span aria-hidden className="size-2 border border-[#62dce9]" />
-                    Outline: destination
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full bg-[#62dce9] shadow-[0_0_7px_2px_rgba(98,220,233,0.45)]"
+                    />
+                    Blue: destination
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full bg-white shadow-[0_0_7px_2px_rgba(255,255,255,0.55)]"
+                    />
+                    White: both
                   </span>
                 </span>
               ) : null}

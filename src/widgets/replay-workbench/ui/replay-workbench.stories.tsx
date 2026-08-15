@@ -699,8 +699,9 @@ export const OriginalLiberoDigitalTwin: Story = {
       name: "Task cues · 1 goal · 2 bodies",
     });
     await expect(taskCues).toHaveAttribute("aria-pressed", "true");
-    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Pulsing: manipulated");
-    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Outline: destination");
+    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Yellow: manipulated");
+    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Blue: destination");
+    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("White: both");
     await userEvent.click(taskCues);
     await expect(taskCues).toHaveAttribute("aria-pressed", "false");
     await expect(canvas.queryByTestId("task-cue-legend")).toBeNull();
