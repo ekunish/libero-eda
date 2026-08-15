@@ -84,7 +84,12 @@ import {
   taskCuePulsePhase,
   updateTaskCueMaterial,
 } from "../model/task-cue-appearance";
-import { resolveTaskCues, type TaskCueBody, type TaskCueResolution } from "../model/task-cues";
+import {
+  parseTaskDefinition,
+  resolveTaskCues,
+  type TaskCueBody,
+  type TaskCueResolution,
+} from "../model/task-cues";
 import {
   buildStaticTrajectorySegments,
   TRAJECTORY_FLOW,
@@ -102,6 +107,7 @@ import {
 import { clampVideoTime, videoTimeForSeriesFrame } from "../model/video-time";
 import { AnimatedRainbowTrajectory } from "./animated-trajectory";
 import { ReplayNavigator } from "./replay-navigator";
+import { TaskDefinitionInspector } from "./task-definition-inspector";
 
 const EMPTY_TASK_CUE_BODIES: TaskCueBody[] = [];
 
@@ -1035,40 +1041,58 @@ function PlaybackControls({ manifest }: { manifest: ReplayManifest }) {
           className="replay-time-input absolute -left-1.5 top-0 z-10 h-5 w-[calc(100%+0.75rem)] cursor-pointer"
         />
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <IconButton variant="ghost" onClick={() => step(-1)} aria-label="Previous frame">
-          <ChevronLeft size={18} />
-        </IconButton>
-        <IconButton
-          variant="primary"
-          onClick={togglePlaying}
-          aria-label={playing ? "Pause" : "Play"}
+      <div
+        className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2"
+        data-testid="replay-controls-row"
+      >
+        <div className="mono min-w-0 justify-self-start text-xs">
+          <span className="whitespace-nowrap">
+            <strong>{String(frame).padStart(3, "0")}</strong>
+            <span className="hidden text-[var(--faint)] sm:inline">
+              {" "}
+              / {String(maxFrame).padStart(3, "0")}
+            </span>
+          </span>
+          <span className="ml-3 hidden whitespace-nowrap text-[var(--muted)] sm:inline">
+            {formatDuration(frame / manifest.fps)}
+          </span>
+        </div>
+        <div
+          className="flex items-center justify-center gap-1 justify-self-center"
+          data-testid="replay-transport-controls"
         >
-          {playing ? (
-            <Pause size={18} fill="currentColor" />
-          ) : (
-            <Play size={18} fill="currentColor" />
-          )}
-        </IconButton>
-        <IconButton variant="ghost" onClick={() => step(1)} aria-label="Next frame">
-          <ChevronRight size={18} />
-        </IconButton>
-        <span className="mono ml-1 min-w-32 text-xs">
-          <strong>{String(frame).padStart(3, "0")}</strong>
-          <span className="text-[var(--faint)]"> / {String(maxFrame).padStart(3, "0")}</span>
-        </span>
-        <span className="mono text-xs text-[var(--muted)]">
-          {formatDuration(frame / manifest.fps)}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <Button
+          <IconButton variant="ghost" onClick={() => step(-1)} aria-label="Previous frame">
+            <ChevronLeft size={19} />
+          </IconButton>
+          <IconButton
+            size="md"
+            variant="primary"
+            className="size-12 min-h-12 rounded-full p-0"
+            data-testid="replay-play-toggle"
+            onClick={togglePlaying}
+            aria-label={playing ? "Pause" : "Play"}
+          >
+            {playing ? (
+              <Pause size={22} fill="currentColor" />
+            ) : (
+              <Play className="translate-x-px" size={22} fill="currentColor" />
+            )}
+          </IconButton>
+          <IconButton variant="ghost" onClick={() => step(1)} aria-label="Next frame">
+            <ChevronRight size={19} />
+          </IconButton>
+        </div>
+        <div className="flex min-w-0 items-center gap-2 justify-self-end">
+          <IconButton
             size="sm"
             variant={loop ? "primary" : "ghost"}
             onClick={() => setLoop(!loop)}
+            aria-label={loop ? "Disable loop" : "Enable loop"}
             aria-pressed={loop}
+            title={loop ? "Disable loop" : "Enable loop"}
           >
-            <Repeat2 size={14} /> Loop
-          </Button>
+            <Repeat2 size={16} />
+          </IconButton>
           <Select
             size="xs"
             aria-label="Playback speed"
@@ -1241,17 +1265,24 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     queryKey: ["task-detail", displayedManifest?.task_key],
     queryFn: () =>
       api<TaskDetail>(`/tasks/${encodeURIComponent(displayedManifest?.task_key ?? "")}`),
-    enabled: hasTwin && Boolean(displayedManifest?.task_key),
+    enabled: Boolean(displayedManifest?.task_key),
     staleTime: Infinity,
   });
+  const taskDefinition = useMemo(
+    () => (taskDetailQuery.data ? parseTaskDefinition(taskDetailQuery.data.bddl) : null),
+    [taskDetailQuery.data],
+  );
   const taskCueResolution = useMemo<TaskCueResolution | null>(() => {
     if (!hasTwin) return null;
     if (!displayedManifest?.task_key) {
       return { status: "unavailable", reason: "This replay has no task definition key" };
     }
-    if (!taskDetailQuery.data) return null;
-    return resolveTaskCues(taskDetailQuery.data.bddl, displayedManifest.body_names);
-  }, [displayedManifest, hasTwin, taskDetailQuery.data]);
+    if (!taskDefinition) return null;
+    if (taskDefinition.status === "unavailable") {
+      return { status: "unavailable", reason: taskDefinition.reason };
+    }
+    return resolveTaskCues(taskDefinition.definition, displayedManifest.body_names);
+  }, [displayedManifest, hasTwin, taskDefinition]);
   const taskCueBodies =
     taskCueResolution?.status === "resolved" ? taskCueResolution.bodies : EMPTY_TASK_CUE_BODIES;
   const [taskCuesEnabled, setTaskCuesEnabled] = useState(true);
@@ -1622,52 +1653,16 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         </fieldset>
         {view === "scene" && hasTwin ? (
           taskCueResolution?.status === "resolved" ? (
-            <>
-              <Button
-                size="xs"
-                variant={taskCuesEnabled ? "primary" : "secondary"}
-                aria-pressed={taskCuesEnabled}
-                title={
-                  taskCueResolution.unrenderedRegions.length
-                    ? `${taskCueResolution.unrenderedRegions.length} abstract table region${taskCueResolution.unrenderedRegions.length === 1 ? " is" : "s are"} intentionally not rendered`
-                    : "Highlight every renderable body referenced by the BDDL goals"
-                }
-                onClick={() => setTaskCuesEnabled((value) => !value)}
-              >
-                Task cues · {taskCueResolution.goals.length} goal
-                {taskCueResolution.goals.length === 1 ? "" : "s"} ·{" "}
-                {taskCueResolution.bodies.length}
-                {" bodies"}
-              </Button>
-              {taskCuesEnabled ? (
-                <span
-                  className="hidden items-center gap-2 text-[12px] text-base-content/60 2xl:flex"
-                  data-testid="task-cue-legend"
-                >
-                  <span className="inline-flex items-center gap-1">
-                    <span
-                      aria-hidden
-                      className="size-2 rounded-full bg-[#ffb15c] shadow-[0_0_7px_2px_rgba(255,177,92,0.5)]"
-                    />
-                    Yellow: manipulated
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span
-                      aria-hidden
-                      className="size-2 rounded-full bg-[#62dce9] shadow-[0_0_7px_2px_rgba(98,220,233,0.45)]"
-                    />
-                    Blue: destination
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span
-                      aria-hidden
-                      className="size-2 rounded-full bg-white shadow-[0_0_7px_2px_rgba(255,255,255,0.55)]"
-                    />
-                    White: both
-                  </span>
-                </span>
-              ) : null}
-            </>
+            <Button
+              size="xs"
+              variant={taskCuesEnabled ? "primary" : "secondary"}
+              aria-label="Task cues"
+              aria-pressed={taskCuesEnabled}
+              title="Toggle BDDL task-role highlights; details are available in Inspector"
+              onClick={() => setTaskCuesEnabled((value) => !value)}
+            >
+              Task cues
+            </Button>
           ) : taskDetailQuery.isError || taskCueResolution?.status === "unavailable" ? (
             <span
               className="text-[12px] text-warning"
@@ -1808,6 +1803,45 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <dd className="mono">{formatDuration((manifest.state_count - 1) / manifest.fps)}</dd>
           </dl>
         </section>
+        {manifest.task_key ? (
+          taskDetailQuery.isError ? (
+            <section className="border-b border-base-300 p-3">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+                Task definition (BDDL)
+              </h2>
+              <div
+                role="alert"
+                className="alert alert-warning alert-soft mt-2 block rounded p-2 text-xs"
+              >
+                Task definition could not be loaded.
+              </div>
+            </section>
+          ) : taskDetailQuery.data && taskDefinition ? (
+            <TaskDefinitionInspector
+              detail={taskDetailQuery.data}
+              parsed={taskDefinition}
+              cueResolution={taskCueResolution}
+              sourceTask={manifest.dataset_id === "lerobot_libero_plus"}
+              taskCuesEnabled={taskCuesEnabled}
+            />
+          ) : (
+            <section className="border-b border-base-300 p-3" aria-label="Loading task definition">
+              <span className="inline-flex items-center gap-2 text-xs text-base-content/55">
+                <span aria-hidden className="loading loading-spinner loading-xs" />
+                Loading task definition…
+              </span>
+            </section>
+          )
+        ) : (
+          <section className="border-b border-base-300 p-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+              Task definition (BDDL)
+            </h2>
+            <p className="mt-2 text-xs leading-5 text-base-content/55">
+              This replay has no task definition key.
+            </p>
+          </section>
+        )}
         <section className="border-b border-base-300 p-3">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
             Current frame

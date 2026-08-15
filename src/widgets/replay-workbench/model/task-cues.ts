@@ -1,13 +1,53 @@
 export type TaskCueRole = "manipulated" | "destination";
 
-export type TaskCueGoal = {
-  index: number;
-  predicate: "on" | "in" | "open" | "close" | "turnon" | "turnoff";
+export type TaskCueGoalPredicate = "on" | "in" | "open" | "close" | "turnon" | "turnoff";
+
+export type BddlPredicate = {
+  predicate: string;
   references: string[];
 };
 
+export type TaskCueGoal = BddlPredicate & {
+  index: number;
+  predicate: TaskCueGoalPredicate;
+};
+
+export type BddlEntity = {
+  name: string;
+  type: string;
+};
+
+export type BddlRegion = {
+  name: string;
+  qualifiedName: string;
+  target: string;
+  ranges: number[][];
+  yawRotations: number[][];
+};
+
+export type BddlTaskDefinition = {
+  problem: string;
+  domain: string;
+  language: string;
+  fixtures: BddlEntity[];
+  objects: BddlEntity[];
+  objectsOfInterest: string[];
+  regions: BddlRegion[];
+  initialState: BddlPredicate[];
+  goals: TaskCueGoal[];
+};
+
+export type BddlTaskDefinitionResult =
+  | { status: "parsed"; definition: BddlTaskDefinition }
+  | { status: "unavailable"; reason: string };
+
 export type TaskCueBody = {
   bodyName: string;
+  roles: TaskCueRole[];
+};
+
+export type TaskCueReference = {
+  reference: string;
   roles: TaskCueRole[];
 };
 
@@ -15,6 +55,7 @@ export type TaskCueResolution =
   | {
       status: "resolved";
       goals: TaskCueGoal[];
+      references: TaskCueReference[];
       bodies: TaskCueBody[];
       unrenderedRegions: string[];
     }
@@ -22,7 +63,14 @@ export type TaskCueResolution =
 
 type SExpression = string | SExpression[];
 
-const supportedPredicates = new Set(["on", "in", "open", "close", "turnon", "turnoff"]);
+const supportedPredicates = new Set<TaskCueGoalPredicate>([
+  "on",
+  "in",
+  "open",
+  "close",
+  "turnon",
+  "turnoff",
+]);
 
 function tokenizeBddl(bddl: string): string[] {
   const withoutComments = bddl.replace(/;[^\n\r]*/g, "");
@@ -62,111 +110,225 @@ function section(root: SExpression, name: string): SExpression[] | null {
   return null;
 }
 
-function strings(expression: SExpression[]): string[] {
-  return expression.filter((item): item is string => typeof item === "string");
+function requiredSection(root: SExpression, name: string): SExpression[] {
+  const value = section(root, name);
+  if (!value) throw new Error(`BDDL is missing ${name}`);
+  return value;
 }
 
-function declaredEntities(root: SExpression): Map<string, string> {
-  const entities = new Map<string, string>();
-  for (const sectionName of [":fixtures", ":objects"]) {
-    const declaration = section(root, sectionName);
-    if (!declaration) throw new Error(`BDDL is missing ${sectionName}`);
-    const tokens = strings(declaration.slice(1));
-    let pending: string[] = [];
-    for (let index = 0; index < tokens.length; index += 1) {
-      const token = tokens[index];
-      if (!token) throw new Error(`BDDL contains an invalid ${sectionName} token`);
-      if (token === "-") {
-        const entityType = tokens[index + 1];
-        if (!pending.length || !entityType) {
-          throw new Error(`BDDL contains an invalid ${sectionName} declaration`);
-        }
-        for (const entity of pending) entities.set(entity, entityType);
-        pending = [];
-        index += 1;
-      } else {
-        pending.push(token);
-      }
-    }
-    if (pending.length) throw new Error(`BDDL contains an untyped ${sectionName} declaration`);
+function stringItems(expression: SExpression[], sectionName: string): string[] {
+  const items = expression.filter((item): item is string => typeof item === "string");
+  if (items.length !== expression.length) {
+    throw new Error(`BDDL ${sectionName} contains a nested declaration`);
   }
+  return items;
+}
+
+function typedEntities(root: SExpression, sectionName: ":fixtures" | ":objects"): BddlEntity[] {
+  const declaration = requiredSection(root, sectionName);
+  const tokens = stringItems(declaration.slice(1), sectionName);
+  const entities: BddlEntity[] = [];
+  let pending: string[] = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (!token) throw new Error(`BDDL contains an invalid ${sectionName} token`);
+    if (token === "-") {
+      const entityType = tokens[index + 1];
+      if (!pending.length || !entityType || entityType === "-") {
+        throw new Error(`BDDL contains an invalid ${sectionName} declaration`);
+      }
+      for (const name of pending) entities.push({ name, type: entityType });
+      pending = [];
+      index += 1;
+    } else {
+      pending.push(token);
+    }
+  }
+  if (pending.length) throw new Error(`BDDL contains an untyped ${sectionName} declaration`);
   return entities;
 }
 
-function regionTargets(root: SExpression): Map<string, string> {
-  const regions = section(root, ":regions");
-  if (!regions) throw new Error("BDDL is missing :regions");
-  const result = new Map<string, string>();
-  for (const item of regions.slice(1)) {
-    if (!Array.isArray(item) || typeof item[0] !== "string") continue;
+function numericRows(expression: SExpression[] | null, attribute: string): number[][] {
+  if (!expression) return [];
+  const rows: number[][] = [];
+
+  function visit(node: SExpression): void {
+    if (!Array.isArray(node)) return;
+    if (node.length > 0 && node.every((item) => typeof item === "string")) {
+      const row = node.map(Number);
+      if (!row.every(Number.isFinite)) {
+        throw new Error(`BDDL ${attribute} contains a non-numeric value`);
+      }
+      rows.push(row);
+      return;
+    }
+    for (const child of node) visit(child);
+  }
+
+  for (const child of expression.slice(1)) visit(child);
+  return rows;
+}
+
+function regions(root: SExpression): BddlRegion[] {
+  const declaration = requiredSection(root, ":regions");
+  const result: BddlRegion[] = [];
+  const qualifiedNames = new Set<string>();
+  for (const item of declaration.slice(1)) {
+    if (!Array.isArray(item) || typeof item[0] !== "string") {
+      throw new Error("BDDL :regions contains an invalid declaration");
+    }
+    const name = item[0];
     const target = section(item, ":target");
     const targetName = target && typeof target[1] === "string" ? target[1] : null;
-    if (!targetName) throw new Error(`BDDL region ${item[0]} is missing its :target`);
-    const qualifiedName = `${targetName}_${item[0]}`;
-    if (result.has(qualifiedName)) throw new Error(`BDDL region is duplicated: ${qualifiedName}`);
-    result.set(qualifiedName, targetName);
+    if (!targetName) throw new Error(`BDDL region ${name} is missing its :target`);
+    const qualifiedName = `${targetName}_${name}`;
+    if (qualifiedNames.has(qualifiedName)) {
+      throw new Error(`BDDL region is duplicated: ${qualifiedName}`);
+    }
+    qualifiedNames.add(qualifiedName);
+    result.push({
+      name,
+      qualifiedName,
+      target: targetName,
+      ranges: numericRows(section(item, ":ranges"), ":ranges"),
+      yawRotations: numericRows(section(item, ":yaw_rotation"), ":yaw_rotation"),
+    });
   }
+  return result;
+}
+
+function predicate(expression: SExpression, context: string): BddlPredicate {
+  if (!Array.isArray(expression) || typeof expression[0] !== "string") {
+    throw new Error(`BDDL ${context} contains an invalid predicate`);
+  }
+  const references = expression.slice(1);
+  if (!references.every((item): item is string => typeof item === "string")) {
+    throw new Error(`BDDL ${context} predicate ${expression[0]} contains a nested argument`);
+  }
+  return { predicate: expression[0].toLowerCase(), references };
+}
+
+function predicates(root: SExpression, sectionName: ":init" | ":goal"): BddlPredicate[] {
+  const declaration = requiredSection(root, sectionName);
+  const result: BddlPredicate[] = [];
+
+  function visit(expression: SExpression): void {
+    if (
+      Array.isArray(expression) &&
+      typeof expression[0] === "string" &&
+      expression[0].toLowerCase() === "and"
+    ) {
+      for (const child of expression.slice(1)) visit(child);
+      return;
+    }
+    result.push(predicate(expression, sectionName));
+  }
+
+  for (const expression of declaration.slice(1)) visit(expression);
   return result;
 }
 
 function goalPredicates(root: SExpression): TaskCueGoal[] {
-  const goal = section(root, ":goal");
-  if (!goal?.[1]) throw new Error("BDDL is missing :goal");
-  const result: TaskCueGoal[] = [];
-
-  function visit(expression: SExpression): void {
-    if (!Array.isArray(expression) || typeof expression[0] !== "string") {
-      throw new Error("BDDL goal contains an invalid expression");
+  const parsed = predicates(root, ":goal");
+  if (!parsed.length) throw new Error("BDDL goal contains no predicate");
+  return parsed.map((item, index) => {
+    if (!supportedPredicates.has(item.predicate as TaskCueGoalPredicate)) {
+      throw new Error(`BDDL goal predicate is unsupported: ${item.predicate}`);
     }
-    const predicate = expression[0].toLowerCase();
-    if (predicate === "and") {
-      for (const child of expression.slice(1)) visit(child);
-      return;
-    }
-    if (!supportedPredicates.has(predicate)) {
-      throw new Error(`BDDL goal predicate is unsupported: ${expression[0]}`);
-    }
-    const references = expression.slice(1);
-    if (!references.every((item): item is string => typeof item === "string")) {
-      throw new Error(`BDDL goal predicate ${expression[0]} contains a nested argument`);
-    }
-    const expectedArguments = predicate === "on" || predicate === "in" ? 2 : 1;
-    if (references.length !== expectedArguments) {
+    const predicateName = item.predicate as TaskCueGoalPredicate;
+    const expectedArguments = predicateName === "on" || predicateName === "in" ? 2 : 1;
+    if (item.references.length !== expectedArguments) {
       throw new Error(
-        `BDDL goal predicate ${expression[0]} expects ${expectedArguments} arguments`,
+        `BDDL goal predicate ${item.predicate} expects ${expectedArguments} arguments`,
       );
     }
-    result.push({
-      index: result.length,
-      predicate: predicate as TaskCueGoal["predicate"],
-      references,
-    });
-  }
+    return { ...item, index, predicate: predicateName };
+  });
+}
 
-  visit(goal[1]);
-  if (!result.length) throw new Error("BDDL goal contains no supported predicate");
-  return result;
+function definitionFromBddl(bddl: string): BddlTaskDefinition {
+  const root = parseBddl(bddl);
+  const problem = section(root, "problem");
+  const problemName = problem && typeof problem[1] === "string" ? problem[1] : null;
+  if (!problemName) throw new Error("BDDL is missing its problem name");
+  const domain = requiredSection(root, ":domain");
+  const domainName = typeof domain[1] === "string" ? domain[1] : null;
+  if (!domainName) throw new Error("BDDL is missing its domain name");
+  const language = requiredSection(root, ":language");
+  const languageText = stringItems(language.slice(1), ":language").join(" ").trim();
+  if (!languageText) throw new Error("BDDL :language is empty");
+  const objectsOfInterest = stringItems(
+    requiredSection(root, ":obj_of_interest").slice(1),
+    ":obj_of_interest",
+  );
+  if (!objectsOfInterest.length) throw new Error("BDDL :obj_of_interest is empty");
+  return {
+    problem: problemName,
+    domain: domainName,
+    language: languageText,
+    fixtures: typedEntities(root, ":fixtures"),
+    objects: typedEntities(root, ":objects"),
+    objectsOfInterest,
+    regions: regions(root),
+    initialState: predicates(root, ":init"),
+    goals: goalPredicates(root),
+  };
+}
+
+export function parseTaskDefinition(bddl: string): BddlTaskDefinitionResult {
+  try {
+    return { status: "parsed", definition: definitionFromBddl(bddl) };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      reason: error instanceof Error ? error.message : "BDDL parsing failed",
+    };
+  }
+}
+
+export function taskCueReferences(definition: BddlTaskDefinition): TaskCueReference[] {
+  const rolesByReference = new Map<string, Set<TaskCueRole>>();
+  const applyRole = (reference: string, role: TaskCueRole): void => {
+    const roles = rolesByReference.get(reference) ?? new Set<TaskCueRole>();
+    roles.add(role);
+    rolesByReference.set(reference, roles);
+  };
+  for (const goal of definition.goals) {
+    applyRole(goal.references[0] as string, "manipulated");
+    if (goal.predicate === "on" || goal.predicate === "in") {
+      applyRole(goal.references[1] as string, "destination");
+    }
+  }
+  return [...rolesByReference]
+    .map(([reference, roles]) => ({
+      reference,
+      roles: [...roles].sort() as TaskCueRole[],
+    }))
+    .sort((a, b) => a.reference.localeCompare(b.reference));
 }
 
 function matchingBodies(entity: string, bodyNames: readonly string[]): string[] {
   return bodyNames.filter((bodyName) => bodyName === entity || bodyName.startsWith(`${entity}_`));
 }
 
-export function resolveTaskCues(bddl: string, bodyNames: readonly string[]): TaskCueResolution {
+export function resolveTaskCues(
+  definition: BddlTaskDefinition,
+  bodyNames: readonly string[],
+): TaskCueResolution {
   try {
-    const root = parseBddl(bddl);
-    const entities = declaredEntities(root);
-    const regions = regionTargets(root);
-    const interest = section(root, ":obj_of_interest");
-    if (!interest) throw new Error("BDDL is missing :obj_of_interest");
-    const interestReferences = new Set(strings(interest.slice(1)));
-    if (!interestReferences.size) throw new Error("BDDL :obj_of_interest is empty");
-    const goals = goalPredicates(root);
+    const entities = new Map(
+      [...definition.fixtures, ...definition.objects].map((entity) => [entity.name, entity.type]),
+    );
+    const regionTargets = new Map(
+      definition.regions.map((region) => [region.qualifiedName, region.target]),
+    );
+    const interestReferences = new Set(definition.objectsOfInterest);
+    const references = taskCueReferences(definition);
     const rolesByBody = new Map<string, Set<TaskCueRole>>();
     const unrenderedRegions = new Set<string>();
 
     const applyRole = (reference: string, role: TaskCueRole): void => {
-      const regionTarget = regions.get(reference);
+      const regionTarget = regionTargets.get(reference);
       const entity = entities.has(reference) ? reference : regionTarget;
       if (!entity) throw new Error(`BDDL goal reference cannot be resolved: ${reference}`);
       const regionTargetType = regionTarget ? entities.get(regionTarget) : undefined;
@@ -186,19 +348,15 @@ export function resolveTaskCues(bddl: string, bodyNames: readonly string[]): Tas
       }
     };
 
-    for (const goal of goals) {
-      if (goal.predicate === "on" || goal.predicate === "in") {
-        applyRole(goal.references[0] as string, "manipulated");
-        applyRole(goal.references[1] as string, "destination");
-      } else {
-        applyRole(goal.references[0] as string, "manipulated");
-      }
+    for (const reference of references) {
+      for (const role of reference.roles) applyRole(reference.reference, role);
     }
 
     if (!rolesByBody.size) throw new Error("BDDL goal has no renderable MuJoCo body");
     return {
       status: "resolved",
-      goals,
+      goals: definition.goals,
+      references,
       bodies: [...rolesByBody]
         .map(([bodyName, roles]) => ({
           bodyName,

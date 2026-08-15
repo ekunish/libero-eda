@@ -201,6 +201,11 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
     page.getByTestId("replay-command-bar").getByText("LIBERO-Plus training record"),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /Task cues/ })).toHaveCount(0);
+  const sourceDefinition = page.getByTestId("task-definition-inspector");
+  await expect(sourceDefinition).toContainText("Source task definition (BDDL)");
+  await expect(sourceDefinition).toContainText(
+    "does not contain a record-specific BDDL environment definition",
+  );
 
   const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
   await expect
@@ -249,20 +254,53 @@ test("Replay exposes camera controls and current EEF orientation without result 
   await page.goto("/replay/?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
   await expect(page.getByRole("button", { name: "Front sync" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Oblique" })).toBeVisible();
-  const taskCues = page.getByRole("button", {
-    name: /Task cues · \d+ goals? · \d+ bodies/,
-  });
+  const taskCues = page.getByRole("button", { name: "Task cues" });
   await expect(taskCues).toBeVisible();
   await expect(taskCues).toHaveAttribute("aria-pressed", "true");
-  const taskCueLegend = page.getByTestId("task-cue-legend");
-  await expect(taskCueLegend).toContainText("Yellow: manipulated");
-  await expect(taskCueLegend).toContainText("Blue: destination");
-  await expect(taskCueLegend).toContainText("White: both");
+  const taskDefinition = page.getByTestId("task-definition-inspector");
+  await expect(taskDefinition).toContainText("Success goals");
+  await expect(taskDefinition).toContainText("Manipulated");
+  await expect(taskDefinition).toContainText("Destination");
+  await expect(taskDefinition).toContainText("3D bodies:");
+  await expect(page.getByTestId("bddl-initial-state")).toBeVisible();
+  await expect(page.getByTestId("bddl-entities")).toBeVisible();
+  await expect(page.getByTestId("bddl-regions")).toBeVisible();
+  await expect(page.getByTestId("raw-bddl-disclosure")).toHaveCount(1);
   await expect(page.getByText("Outline: destination")).toHaveCount(0);
   await taskCues.click();
   await expect(taskCues).toHaveAttribute("aria-pressed", "false");
+  await expect(taskDefinition).toContainText("3D cues off");
   await taskCues.click();
   await expect(taskCues).toHaveAttribute("aria-pressed", "true");
+  const controlsRow = await page.getByTestId("replay-controls-row").boundingBox();
+  const playToggle = await page.getByTestId("replay-play-toggle").boundingBox();
+  expect(controlsRow).not.toBeNull();
+  expect(playToggle).not.toBeNull();
+  expect(
+    Math.abs(
+      (playToggle?.x ?? 0) +
+        (playToggle?.width ?? 0) / 2 -
+        ((controlsRow?.x ?? 0) + (controlsRow?.width ?? 0) / 2),
+    ),
+  ).toBeLessThanOrEqual(2);
+  expect(playToggle?.width ?? 0).toBeGreaterThanOrEqual(48);
+  expect(playToggle?.height ?? 0).toBeGreaterThanOrEqual(48);
+  await expect
+    .poll(() =>
+      page.getByTestId("replay-play-toggle").evaluate((button) => {
+        const radius = Number.parseFloat(getComputedStyle(button).borderRadius);
+        return radius >= button.getBoundingClientRect().width / 2;
+      }),
+    )
+    .toBe(true);
+  const loop = page.getByRole("button", { name: "Disable loop" });
+  await expect(loop).toHaveText("");
+  await expect(page.getByText("Loop", { exact: true })).toHaveCount(0);
+  await loop.click();
+  await expect(page.getByRole("button", { name: "Enable loop" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
   await expect(page.getByTestId("current-rotation-vector")).toContainText("[");
   await expect(page.getByText("Scene & camera")).toHaveCount(0);
   await expect(page.getByText("x / y / z [m]", { exact: true })).toHaveCount(0);

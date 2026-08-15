@@ -372,11 +372,18 @@ const taskDetail: TaskDetail = {
   entry_kind: "original",
   bddl: `(define (problem storybook)
     (:domain robosuite)
-    (:regions)
+    (:language ${originalManifest.task_name})
+    (:regions
+      (bowl_region (:target main_table) (:ranges ((-0.06 0.19 -0.04 0.21))))
+      (plate_region (:target main_table) (:ranges ((0.05 0.19 0.07 0.21))))
+    )
     (:fixtures main_table - table)
     (:objects black_bowl - bowl plate_1 - plate)
     (:obj_of_interest black_bowl plate_1)
-    (:init)
+    (:init
+      (On black_bowl main_table_bowl_region)
+      (On plate_1 main_table_plate_region)
+    )
     (:goal (And (On black_bowl plate_1)))
   )`,
   bddl_diff: "",
@@ -695,16 +702,36 @@ export const OriginalLiberoDigitalTwin: Story = {
     await expect(canvas.queryByText("Drag to orbit · wheel to zoom")).toBeNull();
     await expect(canvas.queryByText("horizon n/a")).toBeNull();
     await expect(canvas.queryByTestId("replay-layout-toggle")).toBeNull();
-    const taskCues = await canvas.findByRole("button", {
-      name: "Task cues · 1 goal · 2 bodies",
-    });
+    const taskCues = await canvas.findByRole("button", { name: "Task cues" });
     await expect(taskCues).toHaveAttribute("aria-pressed", "true");
-    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Yellow: manipulated");
-    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Blue: destination");
-    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("White: both");
+    const taskDefinition = await canvas.findByTestId("task-definition-inspector");
+    await expect(taskDefinition).toHaveTextContent("Task definition (BDDL)");
+    await expect(taskDefinition).toHaveTextContent("Success goals");
+    await expect(taskDefinition).toHaveTextContent("black_bowl → plate_1");
+    await expect(taskDefinition).toHaveTextContent("Manipulated");
+    await expect(taskDefinition).toHaveTextContent("Destination");
+    await expect(taskDefinition).toHaveTextContent("3D bodies: black_bowl, plate_1_main");
+    await expect(canvas.getByTestId("bddl-initial-state")).toHaveTextContent("2");
+    await expect(canvas.getByTestId("bddl-entities")).toHaveTextContent("3");
+    await expect(canvas.getByTestId("bddl-regions")).toHaveTextContent("2");
+    await expect(canvas.getByTestId("raw-bddl-disclosure")).toBeInTheDocument();
     await userEvent.click(taskCues);
     await expect(taskCues).toHaveAttribute("aria-pressed", "false");
-    await expect(canvas.queryByTestId("task-cue-legend")).toBeNull();
+    await expect(taskDefinition).toHaveTextContent("3D cues off");
+    const controlsRow = canvas.getByTestId("replay-controls-row").getBoundingClientRect();
+    const playToggle = canvas.getByTestId("replay-play-toggle").getBoundingClientRect();
+    await expect(
+      Math.abs(playToggle.left + playToggle.width / 2 - (controlsRow.left + controlsRow.width / 2)),
+    ).toBeLessThanOrEqual(2);
+    await expect(playToggle.width).toBeGreaterThanOrEqual(48);
+    await expect(playToggle.height).toBeGreaterThanOrEqual(48);
+    const loop = canvas.getByRole("button", { name: "Disable loop" });
+    await expect(loop).toHaveTextContent(/^$/);
+    await userEvent.click(loop);
+    await expect(canvas.getByRole("button", { name: "Enable loop" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     const video = canvas.getByTestId("video-panel").getBoundingClientRect();
     const spatial = canvas.getByTestId("spatial-panel").getBoundingClientRect();
     const stage = canvas.getByTestId("replay-stage").getBoundingClientRect();
@@ -880,6 +907,12 @@ export const LiberoPlusEefOnly: Story = {
       canvas.getByRole("button", { name: /Reset Front \/ agentview orientation/ }),
     ).toBeEnabled();
     await expect(canvas.getByRole("navigation", { name: "Filtered records" })).toBeVisible();
+    await expect(await canvas.findByTestId("task-definition-inspector")).toHaveTextContent(
+      "Source task definition (BDDL)",
+    );
+    await expect(canvas.getByTestId("task-definition-inspector")).toHaveTextContent(
+      "does not contain a record-specific BDDL environment definition",
+    );
     await expect(canvas.getByRole("link", { name: "Back to Recorded Data" })).toHaveAttribute(
       "href",
       "/data/?dataset=lerobot_libero_plus&task=libero%3Alibero_spatial%3A5",
