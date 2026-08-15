@@ -1,0 +1,25 @@
+import { create } from "storybook/theming";
+
+export const liberoTheme = create({
+  base: "light",
+  brandTitle: "LIBERO EDA UI",
+  brandUrl: "/",
+  colorPrimary: "#2f6f62",
+  colorSecondary: "#6d6485",
+  appBg: "#f4f3ef",
+  appContentBg: "#ffffff",
+  appPreviewBg: "#f4f3ef",
+  appBorderColor: "#e2dfd7",
+  appBorderRadius: 6,
+  fontBase: '"Noto Sans JP Variable", "Noto Sans JP", sans-serif',
+  fontCode: '"SFMono-Regular", Consolas, monospace',
+  textColor: "#202422",
+  textInverseColor: "#ffffff",
+  barTextColor: "#60655f",
+  barSelectedColor: "#2f6f62",
+  barHoverColor: "#202422",
+  inputBg: "#ffffff",
+  inputBorder: "#d8d5cd",
+  inputTextColor: "#202422",
+  inputBorderRadius: 5,
+});

@@ -1,0 +1,14 @@
+packages:
+  - .
+
+onlyBuiltDependencies:
+  - unrs-resolver
+
+allowBuilds:
+  esbuild: true
+  msw: true
+  unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - '@biomejs/biome@2.5.8'
+  - '@biomejs/cli-linux-x64@2.5.8'

@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+storybook-static/
+test-results/
+playwright-report/
+.vercel/
+*.tsbuildinfo
+.env*
+!.env.example
+__pycache__/
+.ruff_cache/
+*.pyc
+.DS_Store
