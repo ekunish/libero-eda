@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 type VercelConfig = {
+  outputDirectory: string;
   headers: Array<{
     headers: Array<{ key: string; value: string }>;
   }>;
@@ -17,6 +18,7 @@ describe("Vercel Content Security Policy", () => {
       .flatMap((route) => route.headers)
       .find((header) => header.key === "Content-Security-Policy")?.value;
 
+    expect(config.outputDirectory).toBe("out");
     expect(policy).toContain("connect-src 'self' blob:");
     expect(policy).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'");
   });
