@@ -2,15 +2,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import {
-  CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
-  CircleX,
-  PanelLeft,
-  Search,
-  X,
-} from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft, Search, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, useState } from "react";
@@ -45,19 +37,6 @@ function recordingLabel(item: ReplayContextItem): string {
     return `Dataset episode #${item.source_episode_id ?? item.episode_id}`;
   }
   return `init ${item.init_index ?? item.episode_id}`;
-}
-
-function outcomeBadge(item: ReplayContextItem) {
-  if (item.outcome.success == null) return null;
-  return item.outcome.success ? (
-    <Badge tone="green" className="shrink-0">
-      <CheckCircle2 size={11} /> Success
-    </Badge>
-  ) : (
-    <Badge tone="red" className="shrink-0">
-      <CircleX size={11} /> Failure
-    </Badge>
-  );
 }
 
 function scopeLabel(context: ReplayContext | undefined): string {
@@ -322,7 +301,6 @@ function NavigatorBody({
                         <span className="mono truncate text-xs font-semibold">
                           {recordingLabel(item)}
                         </span>
-                        {outcomeBadge(item)}
                       </div>
                       <p className="mt-1 line-clamp-2 text-xs leading-4 text-base-content/65">
                         {item.task_name}

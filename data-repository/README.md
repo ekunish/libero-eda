@@ -30,6 +30,11 @@ pinned `Sylvest/libero_plus_lerobot` revision. LIBERO-Plus evaluation
 classification and BDDL files are also not copied; the application loads them
 directly from `sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`.
 
+Original LIBERO video is displayed in its recorded source orientation. The
+published LIBERO-Plus MP4 convention is rotated 180 degrees from raw LIBERO;
+each replay manifest declares that convention and the Replay UI restores the
+simulator orientation by default. The source pixels are not rewritten.
+
 `manifest.json` is the small browser entry point for schema, counts, and
 provenance. It pins `integrity/artifacts.json`, which records every distributed
 file's byte size and SHA-256 value. Both are written only after a complete

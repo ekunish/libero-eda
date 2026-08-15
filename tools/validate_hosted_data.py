@@ -7,6 +7,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,8 @@ EXPECTED = {
     "plus_training_episodes": 14_347,
     "evaluation_conditions": 10_030,
 }
+
+EXPECTED_CAMERAS = {"agentview", "robot0_eye_in_hand"}
 
 
 def digest(path: Path) -> str:
@@ -67,6 +70,95 @@ def replay_asset(root: Path, kind: str, replay_id: str, suffix: str) -> Path:
         root
         / f"assets/{kind}/original_libero/{'-'.join(parts[2:-2])}/{parts[-2]}/{replay_id}{suffix}"
     )
+
+
+def validate_replay_manifest(
+    record: dict[str, Any],
+    replay: dict[str, Any],
+    task_key: str,
+    plus_revision: str,
+) -> None:
+    replay_id = record.get("replay_id")
+    dataset_id = record.get("dataset_id")
+    if replay.get("replay_id") != replay_id:
+        raise RuntimeError(f"replay manifest identity mismatch: {replay_id}")
+    if replay.get("dataset_id") != dataset_id:
+        raise RuntimeError(f"replay dataset mismatch: {replay_id}")
+    if replay.get("task_key") != task_key or record.get("base_task_key") != task_key:
+        raise RuntimeError(f"replay task identity mismatch: {replay_id}")
+    if replay.get("state_count") != record.get("length"):
+        raise RuntimeError(f"replay state count mismatch: {replay_id}")
+    fps = replay.get("fps")
+    if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0:
+        raise RuntimeError(f"invalid replay fps: {replay_id}")
+    videos = replay.get("videos")
+    if not isinstance(videos, list) or {video.get("camera") for video in videos} != EXPECTED_CAMERAS:
+        raise RuntimeError(f"replay camera set mismatch: {replay_id}")
+    if len(videos) != len(EXPECTED_CAMERAS):
+        raise RuntimeError(f"duplicate replay camera: {replay_id}")
+
+    for video in videos:
+        camera = video["camera"]
+        start = video.get("start_time_sec")
+        end = video.get("end_time_sec")
+        offset = video.get("frame_offset")
+        if (
+            not isinstance(start, (int, float))
+            or not math.isfinite(start)
+            or start < 0
+            or not isinstance(end, (int, float))
+            or not math.isfinite(end)
+            or end <= start
+            or not isinstance(offset, int)
+            or offset < 0
+            or not isinstance(video.get("width"), int)
+            or video["width"] <= 0
+            or not isinstance(video.get("height"), int)
+            or video["height"] <= 0
+        ):
+            raise RuntimeError(f"invalid replay video timebase: {replay_id}/{camera}")
+        final_series_time = start + max(0, replay["state_count"] - 1 - offset) / fps
+        if final_series_time > end + 1e-6:
+            raise RuntimeError(f"video cannot contain all replay states: {replay_id}/{camera}")
+
+        if dataset_id == "lerobot_libero_plus":
+            episode = record.get("episode_index")
+            if not isinstance(episode, int) or replay_id != f"demo-{episode}":
+                raise RuntimeError(f"LIBERO-Plus episode identity mismatch: {replay_id}")
+            source_camera = (
+                "observation.images.front"
+                if camera == "agentview"
+                else "observation.images.wrist"
+            )
+            expected_url = (
+                "https://huggingface.co/datasets/Sylvest/libero_plus_lerobot/resolve/"
+                f"{plus_revision}/videos/chunk-{episode // 1000:03d}/{source_camera}/"
+                f"episode_{episode:06d}.mp4"
+            )
+            if video.get("asset_id") != expected_url:
+                raise RuntimeError(f"LIBERO-Plus public MP4 URL mismatch: {replay_id}/{camera}")
+            expected_end = replay["state_count"] / fps
+            if (
+                start != 0.0
+                or offset != 0
+                or not math.isclose(end, expected_end, rel_tol=0, abs_tol=1e-9)
+            ):
+                raise RuntimeError(f"LIBERO-Plus episode timebase mismatch: {replay_id}/{camera}")
+            if (
+                video.get("default_display_transform") != "rotate_180"
+                or video.get("display_transform_provenance")
+                != "source:lerobot-image-convention/rotate-180"
+            ):
+                raise RuntimeError(f"LIBERO-Plus orientation contract mismatch: {replay_id}/{camera}")
+        elif dataset_id == "original_libero":
+            if (
+                video.get("default_display_transform") != "identity"
+                or video.get("display_transform_provenance")
+                != "app:libero-eda/original-libero-derived-v1"
+            ):
+                raise RuntimeError(f"Original LIBERO orientation contract mismatch: {replay_id}/{camera}")
+        else:
+            raise RuntimeError(f"unknown dataset in replay shard: {dataset_id}")
 
 
 def main() -> None:
@@ -133,6 +225,15 @@ def main() -> None:
     catalog = load_json(root / manifest["catalog"]["tasks"])
     episodes = load_json(root / manifest["catalog"]["episodes"])
     sources = load_json(root / manifest["catalog"]["sources"])
+    source_by_id = {
+        source["source_id"]: source
+        for group in sources.get("groups", [])
+        for source in group.get("sources", [])
+    }
+    plus_source = source_by_id.get("libero_plus_lerobot")
+    plus_revision = plus_source.get("revision") if isinstance(plus_source, dict) else None
+    if not isinstance(plus_revision, str) or len(plus_revision) != 40:
+        raise RuntimeError("pinned LIBERO-Plus public source revision is missing")
     if len(catalog.get("families", [])) != EXPECTED["task_families"]:
         raise RuntimeError("task family count mismatch")
     if len(catalog.get("details", {})) != EXPECTED["task_families"]:
@@ -142,10 +243,14 @@ def main() -> None:
     if len(catalog.get("replay_tasks", {})) != len(episodes):
         raise RuntimeError("replay lookup count mismatch")
     dataset_counts: dict[str, int] = {}
+    episode_by_id: dict[str, dict[str, Any]] = {}
     for episode in episodes:
         dataset = episode["dataset_id"]
         dataset_counts[dataset] = dataset_counts.get(dataset, 0) + 1
         replay_id = episode["replay_id"]
+        if replay_id in episode_by_id:
+            raise RuntimeError(f"duplicate episode search record: {replay_id}")
+        episode_by_id[replay_id] = episode
         for required in (
             replay_asset(root, "series", replay_id, ".arrow.gz"),
             replay_asset(root, "thumbnails", replay_id, ".webp"),
@@ -160,6 +265,41 @@ def main() -> None:
         "lerobot_libero_plus": EXPECTED["plus_training_episodes"],
     }:
         raise RuntimeError(f"episode dataset counts mismatch: {dataset_counts}")
+
+    shard_replay_ids: set[str] = set()
+    for task_key, relative in catalog["task_shards"].items():
+        shard = load_json(root / relative)
+        if shard.get("task_key") != task_key:
+            raise RuntimeError(f"task shard identity mismatch: {relative}")
+        datasets = shard.get("datasets")
+        if not isinstance(datasets, dict) or set(datasets) != {
+            "original_libero",
+            "lerobot_libero_plus",
+        }:
+            raise RuntimeError(f"task shard dataset contract mismatch: {relative}")
+        for dataset_id, entries in datasets.items():
+            if not isinstance(entries, list):
+                raise RuntimeError(f"task shard entries are invalid: {relative}/{dataset_id}")
+            for entry in entries:
+                if not isinstance(entry, dict) or set(entry) != {"record", "manifest"}:
+                    raise RuntimeError(f"task shard entry contract mismatch: {relative}")
+                record = entry["record"]
+                replay = entry["manifest"]
+                replay_id = record.get("replay_id")
+                if replay_id in shard_replay_ids:
+                    raise RuntimeError(f"duplicate replay in task shards: {replay_id}")
+                if episode_by_id.get(replay_id) != record:
+                    raise RuntimeError(f"task shard record differs from search index: {replay_id}")
+                if catalog["replay_tasks"].get(replay_id) != task_key:
+                    raise RuntimeError(f"replay lookup task mismatch: {replay_id}")
+                validate_replay_manifest(record, replay, task_key, plus_revision)
+                shard_replay_ids.add(replay_id)
+    if shard_replay_ids != set(episode_by_id):
+        raise RuntimeError(
+            "task shard replay set mismatch: "
+            f"missing={sorted(set(episode_by_id) - shard_replay_ids)[:5]}, "
+            f"extra={sorted(shard_replay_ids - set(episode_by_id))[:5]}"
+        )
     if any(
         source.get("role") == "competition_selection"
         for group in sources["groups"]

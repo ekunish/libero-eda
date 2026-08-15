@@ -35,11 +35,11 @@ cp -a data-repository/. "$STAGING/"
 "$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$STAGING"
 ```
 
-Then use `hf upload-large-folder`. Exclude the local exporter marker and
-uploader cache:
+Then use the current `hf upload` directory workflow. Exclude the local exporter
+marker and uploader cache:
 
 ```bash
-hf upload-large-folder ekunish/libero-eda-data "$STAGING" \
+hf upload ekunish/libero-eda-data "$STAGING" \
   --repo-type dataset \
   --exclude '.cache/**' \
   --exclude '.libero-eda-export.json'
@@ -60,6 +60,11 @@ pnpm test:storybook
 pnpm build
 LIBERO_EDA_E2E_BASE_URL=https://your-preview.example pnpm test:e2e
 ```
+
+For a protected Vercel preview, provide its project-scoped
+`VERCEL_AUTOMATION_BYPASS_SECRET`; Playwright uses the documented protection
+header once to establish a scoped bypass cookie before browser tests. Do not
+disable preview protection for testing.
 
 Production deployment is allowed only when the data validator and all web
 gates succeed. A missing source, malformed manifest, count mismatch, or test

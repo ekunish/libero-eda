@@ -273,6 +273,7 @@ def source_registry() -> dict[str, Any]:
                             "130 HDF5 task files",
                             "50 demonstrations per task",
                             "agentview and wrist RGB",
+                            "displayed in the recorded source orientation",
                             "actions and simulator state",
                         ],
                         "counts": {
@@ -301,6 +302,7 @@ def source_registry() -> dict[str, Any]:
                             "LeRobot v2.1",
                             "14,347 episode Parquet files",
                             "front and wrist MP4",
+                            "source MP4 is rotated 180 degrees from raw LIBERO; the Replay UI restores simulator orientation by default",
                             "40 canonical task instructions",
                         ],
                         "counts": {
@@ -520,17 +522,25 @@ def build_manifest(
             asset_id = f"assets/videos/original_libero/{row['replay_id']}/{video['camera']}.mp4"
             transform = "identity"
             transform_source = "app:libero-eda/original-libero-derived-v1"
+            start_time_sec = video["start_time_sec"]
+            end_time_sec = video["end_time_sec"]
+            frame_offset = video["frame_offset"]
         else:
             asset_id = public_plus_video(row["source_episode_index"], video["camera"])
             transform = "rotate_180"
             transform_source = "source:lerobot-image-convention/rotate-180"
+            # The public Sylvest files are one MP4 per episode. Source catalog times
+            # refer to the original chunked LeRobot video and must not leak into this URL.
+            start_time_sec = 0.0
+            end_time_sec = row["length"] / row["fps"]
+            frame_offset = 0
         exported_videos.append(
             {
                 "camera": video["camera"],
                 "asset_id": asset_id,
-                "start_time_sec": video["start_time_sec"],
-                "end_time_sec": video["end_time_sec"],
-                "frame_offset": video["frame_offset"],
+                "start_time_sec": start_time_sec,
+                "end_time_sec": end_time_sec,
+                "frame_offset": frame_offset,
                 "width": video["width"],
                 "height": video["height"],
                 "default_display_transform": transform,

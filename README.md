@@ -10,7 +10,7 @@ and BDDL definitions are fetched directly from a pinned official LIBERO-Plus
 GitHub revision.
 
 Hosted data snapshot:
-[`ekunish/libero-eda-data@a7794c3`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/a7794c387bc595be3b54e8c4ac8eda0e7c49a752).
+[`ekunish/libero-eda-data@9146d92`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/9146d9262c43a4dc10523d0c15baa83e01a2249f).
 
 ## Workspaces
 
@@ -21,7 +21,9 @@ Hosted data snapshot:
 - **Sources** — exact repositories, revisions, structures, counts, and data
   lineage.
 - **Replay** — synchronized front/wrist video, 3D scene when available, and
-  trajectory/action plots.
+  trajectory/action plots. Original video keeps its recorded orientation;
+  LIBERO-Plus declares its published 180-degree convention and is shown in raw
+  simulator orientation by default.
 
 PARC Track 1 and local experiment management are deliberately outside the
 scope of this public repository.

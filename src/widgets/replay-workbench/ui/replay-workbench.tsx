@@ -29,9 +29,12 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  Component,
   type ComponentProps,
   type CSSProperties,
+  type ReactNode,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -55,6 +58,7 @@ import { cn, fixed, formatDuration } from "@/shared/lib/utils";
 import { Chart, chartTextColor } from "@/shared/ui/chart";
 import { Badge, Button, ErrorPanel, IconButton, Select, Skeleton } from "@/shared/ui/primitives";
 import { fixedCameraPoseFromCalibration } from "../model/camera-pose";
+import { rotationVectorQuaternion } from "../model/eef-orientation";
 import {
   buildGripperTrajectorySegments,
   GRIPPER_TRAJECTORY_STYLES,
@@ -85,7 +89,7 @@ import {
   saveVideoTransform,
   type VideoTransform,
 } from "../model/video-orientation";
-import { videoTimeForSeriesFrame } from "../model/video-time";
+import { clampVideoTime, videoTimeForSeriesFrame } from "../model/video-time";
 import { ReplayNavigator } from "./replay-navigator";
 
 function PlaybackTicker() {
@@ -158,13 +162,15 @@ function SyncedVideo({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [orientation, setOrientation] = useState(() => resolveVideoOrientation(manifest, video));
+  const [metadataReady, setMetadataReady] = useState(false);
   const frame = usePlayback((state) => state.frame);
   const playing = usePlayback((state) => state.playing);
   const speed = usePlayback((state) => state.speed);
-  const expected = videoTimeForSeriesFrame(manifest, video, frame);
+  const requestedTime = videoTimeForSeriesFrame(manifest, video, frame);
   useEffect(() => {
     const element = ref.current;
-    if (!element) return;
+    if (!element || !metadataReady) return;
+    const expected = clampVideoTime(requestedTime, element.duration);
     element.playbackRate = speed;
     if (!playing) {
       element.pause();
@@ -173,7 +179,7 @@ function SyncedVideo({
     }
     if (Math.abs(element.currentTime - expected) > 0.025) element.currentTime = expected;
     void element.play().catch(() => undefined);
-  }, [expected, playing, speed]);
+  }, [metadataReady, playing, requestedTime, speed]);
   const updateTransform = (transform: VideoTransform) => {
     saveVideoTransform(manifest, video, transform);
     setOrientation({ mode: "saved", transform, isKnownDefault: orientation.isKnownDefault });
@@ -182,29 +188,18 @@ function SyncedVideo({
     resetVideoTransform(manifest, video);
     setOrientation(resolveVideoOrientation(manifest, video));
   };
+  const resetDescription =
+    manifest.dataset_id === "lerobot_libero_plus"
+      ? "Reset to simulator orientation; the published source MP4 is rotated 180 degrees"
+      : "Reset to the recorded source orientation";
   return (
     <div
-      className="replay-video-pane grid h-auto min-h-[11.25rem] min-w-0 grid-cols-[minmax(0,1fr)_2.75rem] overflow-hidden border border-[var(--line)] bg-base-100"
+      className="replay-video-pane grid h-auto min-h-[11.25rem] min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] overflow-hidden border border-[var(--line)] bg-base-100"
       data-testid={`video-pane-${video.camera}`}
       style={{ "--replay-video-aspect": `${video.width}/${video.height}` } as CSSProperties}
     >
-      <div
-        className="replay-video-media relative min-h-0 w-full overflow-hidden bg-black"
-        data-testid={`video-media-${video.camera}`}
-      >
-        <video
-          ref={ref}
-          src={mediaUrl(video.asset_id)}
-          muted
-          playsInline
-          preload="metadata"
-          className="size-full object-contain"
-          style={{ transform: cssVideoTransform(orientation.transform) }}
-          aria-label={`${label} synchronized video`}
-        />
-      </div>
       <fieldset
-        className="flex min-h-0 w-11 flex-col items-center gap-1 overflow-y-auto border-l border-white/15 bg-neutral px-0.5 py-1 text-neutral-content"
+        className="flex min-h-0 w-11 flex-col items-center gap-1 overflow-y-auto border-r border-white/15 bg-neutral px-0.5 py-1 text-neutral-content"
         data-testid={`video-orientation-toolbar-${video.camera}`}
       >
         <legend className="sr-only">{label} display orientation</legend>
@@ -253,14 +248,30 @@ function SyncedVideo({
         </VideoToolbarButton>
         <VideoToolbarButton
           className="disabled:text-white/35"
-          title="Reset orientation"
-          aria-label={`Reset ${label} orientation`}
+          title={resetDescription}
+          aria-label={`Reset ${label} orientation. ${resetDescription}`}
           disabled={orientation.mode !== "saved"}
           onClick={resetOrientation}
         >
           <RotateCcw size={13} />
         </VideoToolbarButton>
       </fieldset>
+      <div
+        className="replay-video-media relative min-h-0 w-full overflow-hidden bg-black"
+        data-testid={`video-media-${video.camera}`}
+      >
+        <video
+          ref={ref}
+          src={mediaUrl(video.asset_id)}
+          muted
+          playsInline
+          preload="auto"
+          onLoadedMetadata={() => setMetadataReady(true)}
+          className="size-full object-contain"
+          style={{ transform: cssVideoTransform(orientation.transform) }}
+          aria-label={`${label} synchronized video`}
+        />
+      </div>
     </div>
   );
 }
@@ -480,10 +491,12 @@ function DigitalTwin({
   manifest,
   series,
   frame,
+  onReady,
 }: {
   manifest: ReplayManifest;
   series: ReplaySeries;
   frame: number;
+  onReady: () => void;
 }) {
   const gltf = useGLTF(mediaUrl(manifest.scene_asset_id as string)) as {
     scene: Group;
@@ -585,6 +598,9 @@ function DigitalTwin({
       );
     });
   }, [frame, scene, series.body_positions, series.body_quaternions]);
+  useEffect(() => {
+    onReady();
+  }, [onReady]);
   return (
     <>
       {render ? <MujocoLights render={render} /> : null}
@@ -594,6 +610,32 @@ function DigitalTwin({
   );
 }
 
+class SceneModelErrorBoundary extends Component<
+  { children: ReactNode; onError: (error: Error) => void },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown): void {
+    this.props.onError(error instanceof Error ? error : new Error(String(error)));
+  }
+
+  render(): ReactNode {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+type SceneModelLoadState = {
+  assetId: string;
+  phase: "loading" | "ready" | "error";
+  attempt: number;
+  error: Error | null;
+};
+
 function TrajectoryScene({
   manifest,
   series,
@@ -601,6 +643,9 @@ function TrajectoryScene({
   showTwin,
   cameraMode,
   cameraReset,
+  sceneAttempt,
+  onSceneReady,
+  onSceneError,
 }: {
   manifest: ReplayManifest;
   series: ReplaySeries;
@@ -608,6 +653,9 @@ function TrajectoryScene({
   showTwin: boolean;
   cameraMode: "front" | "oblique";
   cameraReset: number;
+  sceneAttempt: number;
+  onSceneReady: () => void;
+  onSceneError: (error: Error) => void;
 }) {
   const points = useMemo(
     () =>
@@ -621,6 +669,10 @@ function TrajectoryScene({
     [series.actions, series.ee_positions],
   );
   const current = points[Math.min(frame, points.length - 1)] ?? new THREE.Vector3();
+  const axisAngle = series.ee_axis_angle ?? [];
+  const currentOrientation = rotationVectorQuaternion(
+    axisAngle[Math.min(frame, Math.max(axisAngle.length - 1, 0))],
+  );
   const center = useMemo(() => {
     if (!points.length) return new THREE.Vector3(0, 0, 0.8);
     const box = new THREE.Box3().setFromPoints(points);
@@ -674,11 +726,15 @@ function TrajectoryScene({
           position={[0, 0, 0]}
         />
       ) : null}
-      <axesHelper args={[0.25]} />
       {showTwin && manifest.scene_asset_id && series.body_positions.length ? (
-        <Suspense fallback={null}>
-          <DigitalTwin manifest={manifest} series={series} frame={frame} />
-        </Suspense>
+        <SceneModelErrorBoundary
+          key={`${manifest.scene_asset_id}-${sceneAttempt}`}
+          onError={onSceneError}
+        >
+          <Suspense fallback={null}>
+            <DigitalTwin manifest={manifest} series={series} frame={frame} onReady={onSceneReady} />
+          </Suspense>
+        </SceneModelErrorBoundary>
       ) : null}
       {trajectorySegments.map((segment) => {
         const style = GRIPPER_TRAJECTORY_STYLES[segment.state];
@@ -697,6 +753,11 @@ function TrajectoryScene({
         <sphereGeometry args={[0.008, 18, 18]} />
         <meshBasicMaterial color="#b85b45" />
       </mesh>
+      {currentOrientation ? (
+        <group position={current} quaternion={currentOrientation}>
+          <axesHelper args={[0.065]} />
+        </group>
+      ) : null}
       <OrbitControls
         key={`controls-${cameraKey}`}
         makeDefault
@@ -708,7 +769,7 @@ function TrajectoryScene({
   );
 }
 
-function GripperTrajectoryLegend({ series }: { series: ReplaySeries }) {
+function GripperTrajectoryLegend({ series, frame }: { series: ReplaySeries; frame: number }) {
   const trajectorySegments = useMemo(
     () => buildGripperTrajectorySegments(series.ee_positions, series.actions),
     [series.actions, series.ee_positions],
@@ -736,6 +797,20 @@ function GripperTrajectoryLegend({ series }: { series: ReplaySeries }) {
       <span className="flex items-center gap-1.5">
         <span aria-hidden className="size-2 rounded-full bg-[#b85b45]" /> Current position
       </span>
+      {rotationVectorQuaternion(series.ee_axis_angle?.[frame]) ? (
+        <span className="flex items-center gap-1.5">
+          <span aria-hidden className="font-semibold text-[#d94747]">
+            R
+          </span>
+          <span aria-hidden className="font-semibold text-[#48a14d]">
+            G
+          </span>
+          <span aria-hidden className="font-semibold text-[#3976d4]">
+            B
+          </span>
+          axes (R=X, G=Y, B=Z) · current EEF orientation
+        </span>
+      ) : null}
     </figure>
   );
 }
@@ -997,6 +1072,74 @@ function serverDesktopWorkspaceSnapshot(): boolean {
   return false;
 }
 
+function ReplayWorkbenchSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading replay workspace"
+      aria-busy="true"
+      className="viewport-page flex min-h-0 flex-col gap-2"
+      data-testid="replay-workbench-skeleton"
+    >
+      <div className="flex h-12 shrink-0 items-center gap-3 border border-base-300 bg-base-100 px-3">
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-5 min-w-32 max-w-xl flex-1" />
+        <Skeleton className="size-8" />
+        <Skeleton className="size-8" />
+      </div>
+      <div className="grid min-h-0 flex-1 gap-px overflow-hidden border border-base-300 bg-base-300 xl:grid-cols-[18rem_minmax(0,1fr)_19rem]">
+        <aside className="hidden min-h-0 bg-base-100 xl:flex xl:flex-col">
+          <div className="grid gap-2 border-b border-base-300 p-3">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+          <div className="grid gap-2 p-3">
+            {["a", "b", "c", "d", "e", "f"].map((key) => (
+              <Skeleton key={key} className="h-16 w-full" />
+            ))}
+          </div>
+        </aside>
+        <main className="grid min-h-0 bg-base-200 xl:grid-rows-[minmax(22rem,3fr)_minmax(15rem,2fr)]">
+          <section className="grid min-h-[32rem] grid-rows-[2.5rem_minmax(0,1fr)] border-b border-base-300 xl:min-h-0">
+            <div className="flex items-center gap-2 bg-base-100 px-3">
+              <Skeleton className="h-7 w-24" />
+              <Skeleton className="h-7 w-20" />
+              <Skeleton className="h-7 w-28" />
+            </div>
+            <div className="grid min-h-0 grid-cols-[minmax(11rem,.42fr)_minmax(0,1fr)] gap-px bg-base-300">
+              <div className="grid grid-rows-2 gap-px bg-black p-2">
+                <Skeleton className="h-full min-h-32 w-full bg-neutral/70" />
+                <Skeleton className="h-full min-h-32 w-full bg-neutral/70" />
+              </div>
+              <Skeleton className="h-full w-full rounded-none" />
+            </div>
+          </section>
+          <section className="grid min-h-[20rem] grid-rows-[3rem_2.5rem_minmax(0,1fr)] bg-base-100 xl:min-h-0">
+            <div className="flex items-center gap-2 border-b border-base-300 px-3">
+              <Skeleton className="size-8" />
+              <Skeleton className="h-2 flex-1" />
+              <Skeleton className="h-5 w-24" />
+            </div>
+            <div className="flex items-center gap-4 border-b border-base-300 px-3">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 flex-1" />
+            </div>
+            <Skeleton className="m-3 h-auto min-h-40 rounded-none" />
+          </section>
+        </main>
+        <aside className="hidden min-h-0 bg-base-100 p-3 xl:grid xl:content-start xl:gap-4">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-32 w-full" />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
 export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1049,6 +1192,12 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const hasTwin = Boolean(
     manifestQuery.data?.scene_asset_id && seriesQuery.data?.body_positions.length,
   );
+  const sceneAssetId = manifestQuery.data?.scene_asset_id ?? null;
+  const [sceneModelLoad, setSceneModelLoad] = useState<SceneModelLoadState | null>(null);
+  const currentSceneModelLoad =
+    sceneAssetId && sceneModelLoad?.assetId === sceneAssetId ? sceneModelLoad : null;
+  const sceneModelPhase = sceneAssetId ? (currentSceneModelLoad?.phase ?? "loading") : null;
+  const sceneAttempt = currentSceneModelLoad?.attempt ?? 0;
   const hasAgentviewCalibration = Boolean(
     manifestQuery.data?.scene_cameras.some(
       (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
@@ -1056,6 +1205,37 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   );
   const view = selectedView ?? (hasTwin ? "scene" : "trajectory");
   const cameraMode = selectedCameraMode ?? (hasAgentviewCalibration ? "front" : "oblique");
+  const handleSceneReady = useCallback(() => {
+    if (!sceneAssetId) return;
+    setSceneModelLoad((current) => ({
+      assetId: sceneAssetId,
+      phase: "ready",
+      attempt: current?.assetId === sceneAssetId ? current.attempt : 0,
+      error: null,
+    }));
+  }, [sceneAssetId]);
+  const handleSceneError = useCallback(
+    (error: Error) => {
+      if (!sceneAssetId) return;
+      setSceneModelLoad((current) => ({
+        assetId: sceneAssetId,
+        phase: "error",
+        attempt: current?.assetId === sceneAssetId ? current.attempt : 0,
+        error,
+      }));
+    },
+    [sceneAssetId],
+  );
+  const retrySceneModel = useCallback(() => {
+    if (!sceneAssetId) return;
+    useGLTF.clear(mediaUrl(sceneAssetId));
+    setSceneModelLoad((current) => ({
+      assetId: sceneAssetId,
+      phase: "loading",
+      attempt: (current?.assetId === sceneAssetId ? current.attempt : 0) + 1,
+      error: null,
+    }));
+  }, [sceneAssetId]);
   useEffect(() => {
     if (manifestQuery.data) configure(manifestQuery.data.state_count - 1, manifestQuery.data.fps);
     return () => usePlayback.getState().reset();
@@ -1114,13 +1294,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   };
   if (manifestQuery.isError) return <ErrorPanel error={manifestQuery.error} />;
   if (seriesQuery.isError) return <ErrorPanel error={seriesQuery.error} />;
-  if (!manifestQuery.data || !seriesQuery.data)
-    return (
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_.7fr]">
-        <Skeleton className="h-[44rem]" />
-        <Skeleton className="h-[44rem]" />
-      </div>
-    );
+  if (!manifestQuery.data || !seriesQuery.data) return <ReplayWorkbenchSkeleton />;
   const manifest = manifestQuery.data;
   const series = seriesQuery.data;
   const videos = manifest.videos.filter(hasRecordedVideoDimensions);
@@ -1144,6 +1318,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const currentSpeed = series.speed[Math.min(frame, series.speed.length - 1)];
   const currentJerk = series.jerk[Math.min(frame, series.jerk.length - 1)];
   const currentAction = frame < series.actions.length ? series.actions[frame] : undefined;
+  const currentRotationVector = series.ee_axis_angle?.[frame];
   const recordingLabel =
     manifest.dataset_id === "original_libero"
       ? "Original LIBERO demo"
@@ -1284,6 +1459,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         id="spatial-view-panel"
         role="tabpanel"
         aria-labelledby={`spatial-tab-${view}`}
+        aria-busy={view === "scene" && hasTwin && sceneModelPhase === "loading"}
         data-testid="spatial-viewport"
         className="relative min-h-0 flex-1 bg-[var(--bg-raised)]"
       >
@@ -1299,13 +1475,79 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             showTwin={view === "scene"}
             cameraMode={cameraMode}
             cameraReset={cameraReset}
+            sceneAttempt={sceneAttempt}
+            onSceneReady={handleSceneReady}
+            onSceneError={handleSceneError}
           />
         )}
-        <GripperTrajectoryLegend series={series} />
+        {view === "scene" && hasTwin && sceneModelPhase === "loading" ? (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="scene-model-loading"
+            className="pointer-events-none absolute right-3 top-3 z-20 flex items-center gap-2 border border-base-300 bg-base-100/90 px-3 py-2 text-xs font-semibold text-base-content shadow-sm backdrop-blur-sm"
+          >
+            <span aria-hidden className="loading loading-spinner loading-sm text-primary" />
+            Loading robot and scene…
+          </div>
+        ) : null}
+        {view === "scene" && hasTwin && sceneModelPhase === "error" ? (
+          <div
+            role="alert"
+            data-testid="scene-model-error"
+            className="absolute right-3 top-3 z-20 flex max-w-80 items-center gap-3 border border-error/30 bg-base-100/95 px-3 py-2 text-xs text-base-content shadow-sm backdrop-blur-sm"
+          >
+            <span className="min-w-0">
+              <strong className="block font-semibold">Scene model failed to load.</strong>
+              <span
+                className="block truncate text-base-content/55"
+                title={currentSceneModelLoad?.error?.message}
+              >
+                The trajectory is still available.
+              </span>
+            </span>
+            <Button size="xs" variant="secondary" onClick={retrySceneModel}>
+              <RotateCcw size={13} /> Retry
+            </Button>
+          </div>
+        ) : null}
+        <GripperTrajectoryLegend series={series} frame={frame} />
       </div>
-      <div className="flex h-8 shrink-0 items-center justify-between border-t border-base-300 px-3 text-xs text-base-content/55">
-        <span>x / y / z [m]</span>
-        <span>Drag to orbit · wheel to zoom</span>
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-t border-base-300 px-2 py-1 text-xs text-base-content/55">
+        <fieldset className="join">
+          <legend className="sr-only">3D camera</legend>
+          <Button
+            size="xs"
+            variant={cameraMode === "front" ? "primary" : "secondary"}
+            className="join-item"
+            disabled={!hasAgentviewCalibration || view === "projection"}
+            title={
+              hasAgentviewCalibration
+                ? `${manifest.scene_fidelity === "recording_render_matched" ? "Recorded materials and lighting; " : ""}use the recorded agentview pose and vertical FOV`
+                : "No exact agentview calibration is available"
+            }
+            onClick={() => {
+              setSelectedCameraMode("front");
+              setCameraReset((value) => value + 1);
+            }}
+          >
+            <Camera size={13} /> Front sync
+          </Button>
+          <Button
+            size="xs"
+            variant={cameraMode === "oblique" ? "primary" : "secondary"}
+            className="join-item"
+            disabled={view === "projection"}
+            title="Free-orbit oblique view"
+            onClick={() => {
+              setSelectedCameraMode("oblique");
+              setCameraReset((value) => value + 1);
+            }}
+          >
+            <RotateCcw size={13} /> Oblique
+          </Button>
+        </fieldset>
+        <span className="ml-auto">Drag to orbit · wheel to zoom</span>
       </div>
     </section>
   );
@@ -1430,49 +1672,6 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         </section>
         <section className="border-b border-base-300 p-3">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
-            Scene & camera
-          </h2>
-          <div className="mt-2 grid gap-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                size="sm"
-                variant={cameraMode === "front" ? "primary" : "secondary"}
-                disabled={!hasAgentviewCalibration || view === "projection"}
-                title={
-                  hasAgentviewCalibration
-                    ? "Use the recorded agentview pose"
-                    : "No exact agentview calibration is available"
-                }
-                onClick={() => {
-                  setSelectedCameraMode("front");
-                  setCameraReset((value) => value + 1);
-                }}
-              >
-                <Camera size={14} /> Front sync
-              </Button>
-              <Button
-                size="sm"
-                variant={cameraMode === "oblique" ? "primary" : "secondary"}
-                disabled={view === "projection"}
-                onClick={() => {
-                  setSelectedCameraMode("oblique");
-                  setCameraReset((value) => value + 1);
-                }}
-              >
-                <RotateCcw size={14} /> Oblique
-              </Button>
-            </div>
-          </div>
-          <p className="mt-2 text-xs leading-5 text-base-content/55">
-            {hasAgentviewCalibration
-              ? `${manifest.scene_fidelity === "recording_render_matched" ? "Recorded materials and lighting" : "Legacy approximate scene"}; Front uses the recorded pose and vertical FOV.`
-              : hasTwin
-                ? "Free-orbit 3D view; exact Front alignment was not recorded."
-                : "MuJoCo body poses are not included in this dataset record."}
-          </p>
-        </section>
-        <section className="border-b border-base-300 p-3">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
             Current frame
           </h2>
           <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
@@ -1495,6 +1694,14 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <div>
               <dt className="text-base-content/45">EEF jerk</dt>
               <dd className="mono mt-0.5">{fixed(currentJerk, 2)}</dd>
+            </div>
+            <div className="col-span-2">
+              <dt className="text-base-content/45">Rotation vector [rad]</dt>
+              <dd className="mono mt-0.5 break-all" data-testid="current-rotation-vector">
+                {rotationVectorQuaternion(currentRotationVector)
+                  ? `[${currentRotationVector?.map((value) => fixed(value, 4)).join(", ")}]`
+                  : "Not recorded"}
+              </dd>
             </div>
           </dl>
         </section>
@@ -1538,15 +1745,6 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
           <Badge tone={manifest.source === "dataset" ? "green" : "cyan"}>{recordingLabel}</Badge>
-          {manifest.outcome.success != null ? (
-            <Badge tone={manifest.outcome.success ? "green" : "red"}>
-              {manifest.outcome.success
-                ? "Success"
-                : manifest.outcome.collided
-                  ? "Failure · collision"
-                  : "Failure · incomplete"}
-            </Badge>
-          ) : null}
           <Badge
             tone={
               hasTwin

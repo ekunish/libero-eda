@@ -93,8 +93,67 @@ test("Replay loads hosted series, media, and the task navigator", async ({ page 
   await expect(page.getByRole("link", { name: /Next record/i })).toBeVisible();
 });
 
+test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", async ({ page }) => {
+  await page.goto("/replay/?replay_id=demo-99&replay_scope=task");
+  await expect(
+    page.getByTestId("replay-command-bar").getByText("LIBERO-Plus training record"),
+  ).toBeVisible();
+
+  const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
+  await expect
+    .poll(() => front.evaluate((video: HTMLVideoElement) => video.readyState))
+    .toBeGreaterThan(0);
+  await expect
+    .poll(() => front.evaluate((video: HTMLVideoElement) => video.duration))
+    .toBeCloseTo(5.65, 2);
+  await expect
+    .poll(() => front.evaluate((video: HTMLVideoElement) => video.currentTime))
+    .toBeLessThan(0.1);
+  await expect(front).toHaveCSS("transform", "matrix(-1, 0, 0, -1, 0, 0)");
+  await expect.poll(() => front.evaluate((video: HTMLVideoElement) => video.ended)).toBe(false);
+
+  const toolbar = page.getByTestId("video-orientation-toolbar-agentview");
+  const media = page.getByTestId("video-media-agentview");
+  const [toolbarBox, mediaBox] = await Promise.all([toolbar.boundingBox(), media.boundingBox()]);
+  expect(toolbarBox).not.toBeNull();
+  expect(mediaBox).not.toBeNull();
+  expect(toolbarBox?.x ?? 1).toBeLessThan(mediaBox?.x ?? 0);
+
+  await page.getByRole("button", { name: "Play" }).click();
+  await expect
+    .poll(() => front.evaluate((video: HTMLVideoElement) => video.currentTime))
+    .toBeGreaterThan(0.1);
+  await expect
+    .poll(async () => Number(await page.getByLabel("Replay playhead").inputValue()))
+    .toBeGreaterThan(1);
+  await page.getByRole("button", { name: "Pause" }).click();
+});
+
+test("Replay exposes camera controls and current EEF orientation without result badges", async ({
+  page,
+}) => {
+  await page.goto("/replay/?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
+  await expect(page.getByRole("button", { name: "Front sync" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Oblique" })).toBeVisible();
+  await expect(page.getByTestId("current-rotation-vector")).toContainText("[");
+  await expect(page.getByText("Scene & camera")).toHaveCount(0);
+  await expect(page.getByText("x / y / z [m]", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByTestId("replay-command-bar").getByText("Success", { exact: true }),
+  ).toHaveCount(0);
+  const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
+  await expect(front).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+});
+
 test("Recorded Data opens a replay and keeps its ID across reload", async ({ page }) => {
   await page.goto("/data/?task=libero%3Alibero_spatial%3A1");
+  if (await page.evaluate(() => matchMedia("(max-width: 1279px)").matches)) {
+    await page
+      .getByRole("button", {
+        name: /pick up the black bowl between the plate.*Spatial #1.*records/,
+      })
+      .click();
+  }
   const records = page.getByRole("list", { name: "Records for the selected task" });
   await expect(records).toBeVisible();
   const replay = records.getByRole("link", { name: /Demo 1.*Replay/ }).first();

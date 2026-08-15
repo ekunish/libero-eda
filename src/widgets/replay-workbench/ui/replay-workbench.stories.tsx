@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import { HttpResponse, http } from "msw";
-import { expect, userEvent, within } from "storybook/test";
+import { delay, HttpResponse, http } from "msw";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import type {
   EvaluationCondition,
   ReplayContext,
@@ -368,6 +368,20 @@ const plusManifest: ReplayManifest = {
   },
 };
 
+const delayedSceneManifest: ReplayManifest = {
+  ...originalManifest,
+  replay_id: "delayed-scene-demo",
+  scene_asset_id: "delayed-analysis-scene",
+  scene_hash: "storybook-delayed-scene",
+};
+
+const retrySceneManifest: ReplayManifest = {
+  ...originalManifest,
+  replay_id: "retry-scene-demo",
+  scene_asset_id: "retry-analysis-scene",
+  scene_hash: "storybook-retry-scene",
+};
+
 const legacyOriginalManifest: ReplayManifest = {
   ...originalManifest,
   replay_id: "original-libero-legacy-scene",
@@ -502,7 +516,10 @@ function handlers(
   manifest: ReplayManifest,
   withBodyState: boolean,
   context = replayContext(manifest),
+  sceneOptions: { delayMs?: number; failOnce?: boolean; manifestDelayMs?: number } = {},
 ) {
+  let sceneAttempts = 0;
+  const sceneAssetId = manifest.scene_asset_id ?? "analysis-scene";
   return [
     http.get("/api/v1/evaluation/conditions", () =>
       HttpResponse.json({
@@ -513,7 +530,10 @@ function handlers(
       }),
     ),
     http.get("/api/v1/replays/:replayId/context", () => HttpResponse.json(context)),
-    http.get("/api/v1/replays/:replayId", () => HttpResponse.json(manifest)),
+    http.get("/api/v1/replays/:replayId", async () => {
+      if (sceneOptions.manifestDelayMs) await delay(sceneOptions.manifestDelayMs);
+      return HttpResponse.json(manifest);
+    }),
     http.get("/api/v1/replays/:replayId/series", () =>
       HttpResponse.json({
         ...series,
@@ -542,13 +562,16 @@ function handlers(
         ],
       }),
     ),
-    http.get(
-      "/api/v1/media/analysis-scene",
-      () =>
-        new HttpResponse(analysisSceneGlb(), {
-          headers: { "Content-Type": "model/gltf-binary" },
-        }),
-    ),
+    http.get(`/api/v1/media/${sceneAssetId}`, async () => {
+      if (sceneOptions.delayMs) await delay(sceneOptions.delayMs);
+      sceneAttempts += 1;
+      if (sceneOptions.failOnce && sceneAttempts === 1) {
+        return new HttpResponse(null, { status: 503 });
+      }
+      return new HttpResponse(analysisSceneGlb(), {
+        headers: { "Content-Type": "model/gltf-binary" },
+      });
+    }),
     http.get("/api/v1/media/:assetId", () => new HttpResponse(null, { status: 204 })),
   ];
 }
@@ -580,6 +603,17 @@ export const OriginalLiberoDigitalTwin: Story = {
     await expect(within(legend).getByText("Open command")).toBeVisible();
     await expect(within(legend).getByText("Close command")).toBeVisible();
     await expect(within(legend).getByText("Current position")).toBeVisible();
+    await expect(
+      within(legend).getByText("axes (R=X, G=Y, B=Z) · current EEF orientation"),
+    ).toBeVisible();
+    await expect(canvas.getByTestId("current-rotation-vector")).toHaveTextContent(
+      "[0.0000, 0.0000, 0.0000]",
+    );
+    await expect(canvas.queryByText("Scene & camera")).toBeNull();
+    await expect(canvas.getByRole("button", { name: "Front sync" })).toBeVisible();
+    await expect(
+      within(canvas.getByTestId("replay-command-bar")).queryByText("Success"),
+    ).toBeNull();
     await expect(canvas.queryByRole("button", { name: "Wide FOV" })).toBeNull();
     await expect(canvas.queryByTestId("replay-layout-toggle")).toBeNull();
     const video = canvas.getByTestId("video-panel").getBoundingClientRect();
@@ -590,6 +624,77 @@ export const OriginalLiberoDigitalTwin: Story = {
     await expect(canvas.getByTestId("video-media-robot0_eye_in_hand")).toHaveTextContent(/^$/);
     await expect(spatial.width / video.width).toBeGreaterThan(2);
     await expect(stage.height / timeline.height).toBeGreaterThan(1.45);
+  },
+};
+
+export const LoadingWorkspace: Story = {
+  args: { replayId: originalManifest.replay_id },
+  parameters: {
+    msw: {
+      handlers: handlers(originalManifest, true, replayContext(originalManifest), {
+        manifestDelayMs: 800,
+      }),
+    },
+  },
+  globals: { viewport: { value: "desktop2k", isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const skeleton = await canvas.findByTestId("replay-workbench-skeleton");
+    await expect(skeleton).toHaveAttribute("aria-busy", "true");
+    await expect(skeleton).toHaveAttribute("aria-label", "Loading replay workspace");
+    await waitFor(() => expect(canvas.queryByTestId("replay-workbench-skeleton")).toBeNull(), {
+      timeout: 3_000,
+    });
+  },
+};
+
+export const DelayedSceneModel: Story = {
+  args: { replayId: delayedSceneManifest.replay_id },
+  parameters: {
+    msw: {
+      handlers: handlers(delayedSceneManifest, true, replayContext(delayedSceneManifest), {
+        delayMs: 800,
+      }),
+    },
+  },
+  globals: { viewport: { value: "desktop2k", isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByTestId("scene-model-loading")).toHaveTextContent(
+      "Loading robot and scene…",
+    );
+    await expect(
+      canvas.getByRole("img", { name: /3D view of the robot, objects, and EEF trajectory/ }),
+    ).toBeVisible();
+    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
+      timeout: 3_000,
+    });
+  },
+};
+
+export const SceneModelRetry: Story = {
+  args: { replayId: retrySceneManifest.replay_id },
+  parameters: {
+    test: { dangerouslyIgnoreUnhandledErrors: true },
+    msw: {
+      handlers: handlers(retrySceneManifest, true, replayContext(retrySceneManifest), {
+        delayMs: 400,
+        failOnce: true,
+      }),
+    },
+  },
+  globals: { viewport: { value: "desktop2k", isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const error = await canvas.findByTestId("scene-model-error");
+    await expect(error).toHaveTextContent("Scene model failed to load.");
+    await expect(canvas.queryByTestId("scene-model-loading")).toBeNull();
+    await userEvent.click(within(error).getByRole("button", { name: "Retry" }));
+    await expect(await canvas.findByTestId("scene-model-loading")).toBeVisible();
+    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
+      timeout: 3_000,
+    });
+    await expect(canvas.queryByTestId("scene-model-error")).toBeNull();
   },
 };
 
@@ -609,13 +714,14 @@ export const LiberoPlusEefOnly: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const media = await canvas.findByTestId("video-media-agentview");
+    await expect(canvas.queryByTestId("scene-model-loading")).toBeNull();
     const toolbar = canvas.getByTestId("video-orientation-toolbar-agentview");
     const vertical = await canvas.findByRole("button", {
       name: "Flip Front / agentview vertically",
     });
     const mediaBox = media.getBoundingClientRect();
     const toolbarBox = toolbar.getBoundingClientRect();
-    await expect(toolbarBox.left).toBeGreaterThanOrEqual(mediaBox.right - 1);
+    await expect(toolbarBox.right).toBeLessThanOrEqual(mediaBox.left + 1);
     await expect(Math.abs(toolbarBox.top - mediaBox.top)).toBeLessThan(2);
     await expect(Math.abs(mediaBox.width - mediaBox.height)).toBeLessThan(2);
     await expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
@@ -640,7 +746,7 @@ export const LiberoPlusEefOnly: Story = {
     await userEvent.click(vertical);
     await expect(vertical).toHaveAttribute("aria-pressed", "false");
     await expect(
-      canvas.getByRole("button", { name: "Reset Front / agentview orientation" }),
+      canvas.getByRole("button", { name: /Reset Front \/ agentview orientation/ }),
     ).toBeEnabled();
     await expect(canvas.getByRole("navigation", { name: "Filtered records" })).toBeVisible();
     await expect(canvas.getByRole("link", { name: "Back to Recorded Data" })).toHaveAttribute(

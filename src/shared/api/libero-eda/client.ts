@@ -20,7 +20,7 @@ import type {
 import { validateHostedManifestUrl } from "./manifest-url";
 
 const DEFAULT_MANIFEST_URL =
-  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/a7794c387bc595be3b54e8c4ac8eda0e7c49a752/manifest.json";
+  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/9146d9262c43a4dc10523d0c15baa83e01a2249f/manifest.json";
 const manifestUrl = validateHostedManifestUrl(
   process.env.NEXT_PUBLIC_LIBERO_EDA_DATA_MANIFEST ?? DEFAULT_MANIFEST_URL,
 );
