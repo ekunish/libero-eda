@@ -59,17 +59,6 @@ describe("trajectory appearance", () => {
     expect(Array.from(target).every(Number.isFinite)).toBe(true);
     expect(target[3]).toBeLessThan(target[7] ?? 0);
     expect(target[7]).toBe(target[11]);
-    const halo = new Float32Array(16);
-    writeTrajectorySegmentColors(
-      halo,
-      "open",
-      [0, 0.08, 0.16],
-      10,
-      11,
-      0,
-      TRAJECTORY_FLOW.haloOpacityScale,
-    );
-    expect(halo[7]).toBeCloseTo((target[7] ?? 0) * TRAJECTORY_FLOW.haloOpacityScale);
     expect(() =>
       writeTrajectorySegmentColors(new Float32Array(4), "open", [0, 0.08], 0, 0, 0),
     ).toThrow(/buffer length/);

@@ -707,8 +707,8 @@ function TrajectoryScene({
       role="img"
       aria-label={
         showTwin
-          ? `3D view of the robot, objects, and EEF trajectory. Hue encodes the gripper command and opacity distinguishes passed, current, and upcoming points. ${motionDescription} Current frame ${frame}.`
-          : `3D view of the EEF trajectory. Hue encodes the gripper command and opacity distinguishes passed, current, and upcoming points. ${motionDescription} Current frame ${frame}.`
+          ? `3D view of the robot, objects, and EEF trajectory. Hue encodes the gripper command, opacity distinguishes passed, current, and upcoming points, and the ring marker follows the current trajectory hue. ${motionDescription} Current frame ${frame}.`
+          : `3D view of the EEF trajectory. Hue encodes the gripper command, opacity distinguishes passed, current, and upcoming points, and the ring marker follows the current trajectory hue. ${motionDescription} Current frame ${frame}.`
       }
       gl={{ antialias: true, alpha: true, toneMapping: THREE.NoToneMapping }}
       dpr={[1, 2]}
@@ -750,10 +750,6 @@ function TrajectoryScene({
         frame={frame}
         reducedMotion={reducedMotion}
       />
-      <mesh position={current}>
-        <sphereGeometry args={[0.008, 18, 18]} />
-        <meshBasicMaterial color="#b85b45" />
-      </mesh>
       {currentOrientation ? (
         <group position={current} quaternion={currentOrientation}>
           <axesHelper args={[0.065]} />
@@ -816,7 +812,17 @@ function GripperTrajectoryLegend({
         </span>
       ))}
       <span className="flex items-center gap-1.5">
-        <span aria-hidden className="size-2 rounded-full bg-[#b85b45]" /> Current position
+        <span
+          aria-hidden
+          className="grid size-3 place-items-center rounded-full"
+          style={{
+            background:
+              "conic-gradient(hsl(0 88% 57%), hsl(90 88% 57%), hsl(180 88% 57%), hsl(270 88% 57%), hsl(360 88% 57%))",
+          }}
+        >
+          <span className="size-1.5 rounded-full bg-base-100" />
+        </span>
+        Current position · follows trajectory hue
       </span>
       <span>
         {reducedMotion ? "Rainbow frozen by reduced-motion" : "Rainbow flows continuously"}
@@ -848,6 +854,12 @@ function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: numbe
     frame,
   );
   const current = points[Math.min(frame, points.length - 1)] ?? [0, 0, 0];
+  const currentIndex = Math.min(frame, Math.max(points.length - 1, 0));
+  const currentSegment =
+    trajectorySegments.find((segment) => segment.startIndex === currentIndex) ??
+    trajectorySegments.find((segment) => segment.endIndex === currentIndex) ??
+    trajectorySegments.at(-1);
+  const currentColor = currentSegment?.color ?? GRIPPER_TRAJECTORY_STYLES.unknown.color;
   const regionOpacity: Record<TrajectoryTemporalRegion, number> = {
     past: TRAJECTORY_FLOW.pastOpacity,
     current: 1,
@@ -933,16 +945,16 @@ function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: numbe
         xAxisIndex: 0,
         yAxisIndex: 0,
         data: [[current[0], current[1]]],
-        symbolSize: 8,
-        itemStyle: { color: "#b85b45" },
+        symbolSize: 7,
+        itemStyle: { color: currentColor, borderColor: text, borderWidth: 1 },
       },
       {
         type: "scatter",
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: [[current[0], current[2]]],
-        symbolSize: 8,
-        itemStyle: { color: "#b85b45" },
+        symbolSize: 7,
+        itemStyle: { color: currentColor, borderColor: text, borderWidth: 1 },
       },
     ],
   };

@@ -608,7 +608,9 @@ export const OriginalLiberoDigitalTwin: Story = {
     await expect(within(legend).getByText("Current")).toBeVisible();
     await expect(within(legend).getByText("Ahead")).toBeVisible();
     await expect(within(legend).getByText("Rainbow flows continuously")).toBeVisible();
-    await expect(within(legend).getByText("Current position")).toBeVisible();
+    await expect(
+      within(legend).getByText("Current position · follows trajectory hue"),
+    ).toBeVisible();
     await expect(
       within(legend).getByText("axes (R=X, G=Y, B=Z) · current EEF orientation"),
     ).toBeVisible();

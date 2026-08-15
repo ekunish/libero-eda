@@ -144,7 +144,8 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
   const rainbowBefore = await spatial.screenshot();
   await page.waitForTimeout(750);
   const rainbowAfter = await spatial.screenshot();
-  expect(visiblyChangedPixelRatio(rainbowBefore, rainbowAfter)).toBeGreaterThanOrEqual(0.0035);
+  // The trajectory is intentionally a thin centerline with no translucent halo.
+  expect(visiblyChangedPixelRatio(rainbowBefore, rainbowAfter)).toBeGreaterThanOrEqual(0.0009);
   expect(await playhead.inputValue()).toBe(frameBefore);
 
   await page.getByRole("button", { name: "Play" }).click();
@@ -177,6 +178,7 @@ test("Replay exposes camera controls and current EEF orientation without result 
   await expect(legend).toContainText("Passed");
   await expect(legend).toContainText("Current");
   await expect(legend).toContainText("Ahead");
+  await expect(legend).toContainText("Current position · follows trajectory hue");
   await expect(legend).toContainText("Rainbow flows continuously");
   const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
   await expect(front).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");

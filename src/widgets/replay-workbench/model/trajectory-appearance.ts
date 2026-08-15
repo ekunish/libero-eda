@@ -14,8 +14,6 @@ export const TRAJECTORY_FLOW = {
   futureOpacity: 0.78,
   pastTransitionFrames: 8,
   futureTransitionFrames: 6,
-  haloWidthAddition: 9,
-  haloOpacityScale: 0.34,
 } as const;
 
 export type TrajectoryTemporalRegion = "past" | "current" | "future";
@@ -137,14 +135,13 @@ export function trajectoryVertexRgba(
   pointIndex: number,
   currentFrame: number,
   elapsedSeconds: number,
-  opacityScale = 1,
 ): RgbaTuple {
   const hue = trajectoryHueDegrees(state, cumulativeDistance, elapsedSeconds);
   const [red, green, blue] =
     hue === null
       ? GRIPPER_TRAJECTORY_STYLES.unknown.rgb
       : hslToRgb(hue, TRAJECTORY_FLOW.saturation, TRAJECTORY_FLOW.lightness);
-  return [red, green, blue, trajectoryTemporalOpacity(pointIndex, currentFrame) * opacityScale];
+  return [red, green, blue, trajectoryTemporalOpacity(pointIndex, currentFrame)];
 }
 
 export function writeTrajectorySegmentColors(
@@ -154,7 +151,6 @@ export function writeTrajectorySegmentColors(
   startIndex: number,
   currentFrame: number,
   elapsedSeconds: number,
-  opacityScale = 1,
 ): void {
   const expectedLength = Math.max(0, cumulativeDistances.length - 1) * 8;
   if (target.length !== expectedLength) {
@@ -170,7 +166,6 @@ export function writeTrajectorySegmentColors(
       startIndex + edge,
       currentFrame,
       elapsedSeconds,
-      opacityScale,
     );
     const end = trajectoryVertexRgba(
       state,
@@ -178,7 +173,6 @@ export function writeTrajectorySegmentColors(
       startIndex + edge + 1,
       currentFrame,
       elapsedSeconds,
-      opacityScale,
     );
     target.set(start, offset);
     target.set(end, offset + 4);
