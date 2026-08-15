@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { Activity, Database, Route } from "lucide-react";
+import { expect, userEvent, within } from "storybook/test";
 import { Card } from "@/shared/ui/primitives";
 import { AppShell } from "./app-shell";
 
@@ -41,5 +42,21 @@ export const Desktop: Story = {
         </div>
       </div>
     ),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const brandImage = canvas.getByRole("link", { name: "LIBERO EDA home" }).querySelector("img");
+    if (!brandImage) throw new Error("LIBERO EDA home link is missing its brand image.");
+    await expect(brandImage).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "About LIBERO EDA" }));
+    const menu = within(document.body).getByRole("menu");
+    await expect(within(menu).getByText("Hosted data available")).toBeVisible();
+    await expect(within(menu).getByRole("menuitem", { name: "Privacy notice" })).toBeVisible();
+    await expect(within(menu).getByRole("menuitem", { name: "Terms of use" })).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect(canvas.getByRole("button", { name: "About LIBERO EDA" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   },
 };

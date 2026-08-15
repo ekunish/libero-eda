@@ -1,11 +1,25 @@
 "use client";
 
-import { CircleDot, Database, FlaskConical, LibraryBig } from "lucide-react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import {
+  CircleDot,
+  Code2,
+  Database,
+  ExternalLink,
+  FileText,
+  FlaskConical,
+  Info,
+  LibraryBig,
+  Scale,
+  ShieldCheck,
+} from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { GlobalSearch } from "@/features/global-search";
 import { cn } from "@/shared/lib/utils";
+import { IconButton } from "@/shared/ui/primitives";
 
 const dataTabs = [
   { href: "/data", label: "Recorded Data" },
@@ -23,18 +37,65 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function HealthIndicator() {
-  const label = "Hosted data";
+const aboutLinks = [
+  { href: "/privacy/", label: "Privacy notice", icon: ShieldCheck, external: false },
+  { href: "/terms/", label: "Terms of use", icon: Scale, external: false },
+  { href: "/sources/", label: "Data sources", icon: FileText, external: false },
+  {
+    href: "https://github.com/ekunish/libero-eda",
+    label: "Source code",
+    icon: Code2,
+    external: true,
+  },
+  {
+    href: "https://github.com/ekunish/libero-eda/blob/main/LICENSE",
+    label: "Apache-2.0 license",
+    icon: ExternalLink,
+    external: true,
+  },
+] as const;
+
+function AboutMenu() {
   return (
-    <div
-      role="status"
-      className="flex h-8 items-center gap-2 rounded-field px-2 text-xs text-base-content/65"
-      title={label}
-      aria-label={`System status: ${label}`}
-    >
-      <span className="status status-success status-xs" />
-      <span className="hidden 2xl:inline">{label}</span>
-    </div>
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <IconButton size="xs" variant="ghost" aria-label="About LIBERO EDA">
+          <Info size={16} />
+        </IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={6}
+          className="z-[70] w-56 rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+        >
+          <DropdownMenu.Label className="px-3 py-2">
+            <span className="block text-sm font-semibold">LIBERO EDA</span>
+            <span className="mt-1 flex items-center gap-1.5 text-xs font-normal text-base-content/55">
+              <span className="status status-success status-xs" />
+              Hosted data available
+            </span>
+          </DropdownMenu.Label>
+          <DropdownMenu.Separator className="my-1 h-px bg-base-300" />
+          {aboutLinks.map((item) => {
+            const Icon = item.icon;
+            return (
+              <DropdownMenu.Item key={item.href} asChild>
+                <Link
+                  href={item.href}
+                  target={item.external ? "_blank" : undefined}
+                  rel={item.external ? "noreferrer" : undefined}
+                  className="flex min-h-10 cursor-pointer items-center gap-3 rounded-field px-3 text-sm text-base-content/70 outline-none hover:bg-base-200 focus:bg-base-200 focus:text-base-content"
+                >
+                  <Icon size={15} className="text-base-content/45" />
+                  {item.label}
+                </Link>
+              </DropdownMenu.Item>
+            );
+          })}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
@@ -78,9 +139,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Link
           href="/data"
           aria-label="LIBERO EDA home"
-          className="mono mx-auto grid size-10 place-items-center rounded-field border border-base-content/25 text-xs font-bold"
+          className="mx-auto grid size-10 place-items-center overflow-hidden rounded-field"
         >
-          LE
+          <Image src="/brand/libero-eda-mark.svg" alt="" width={40} height={40} priority />
         </Link>
         <nav className="mt-5 flex flex-col gap-1" aria-label="Workspaces">
           <WorkspaceRailLink
@@ -104,9 +165,14 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="lg:pl-[72px]">
         <header className="sticky top-0 z-30 flex h-12 items-center border-b border-base-300 bg-base-100 px-3">
           <Link href="/data" className="mr-3 flex items-center gap-2 lg:hidden">
-            <span className="mono grid size-7 place-items-center rounded-sm border border-base-content/25 text-xs font-bold">
-              LE
-            </span>
+            <Image
+              src="/brand/libero-eda-mark.svg"
+              alt=""
+              width={28}
+              height={28}
+              className="rounded-sm"
+              priority
+            />
             <span className="hidden text-sm font-semibold sm:inline">LIBERO EDA</span>
           </Link>
 
@@ -145,7 +211,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <div className="ml-auto flex min-w-0 items-center gap-1.5">
             <GlobalSearch />
-            <HealthIndicator />
+            <AboutMenu />
           </div>
         </header>
         <main className="app-main w-full p-3 pb-20 lg:pb-3">{children}</main>

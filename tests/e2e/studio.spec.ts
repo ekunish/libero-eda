@@ -20,6 +20,68 @@ function visiblyChangedPixelRatio(before: Buffer, after: Buffer, channelThreshol
 
 test.describe.configure({ timeout: 90_000 });
 
+test("Brand metadata, icons, manifest, and legal pages are published", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/data/");
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    "https://libero-eda.vercel.app/data/",
+  );
+  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
+    "content",
+    "https://libero-eda.vercel.app/brand/social-card.png",
+  );
+  await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
+    "content",
+    "summary_large_image",
+  );
+  await expect(page.locator('meta[name="twitter:creator"]')).toHaveAttribute("content", "@ekunish");
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute(
+    "href",
+    "/manifest.webmanifest",
+  );
+
+  for (const [path, contentType] of [
+    ["/favicon.ico", "image/vnd.microsoft.icon"],
+    ["/brand/apple-touch-icon.png", "image/png"],
+    ["/brand/social-card.png", "image/png"],
+  ] as const) {
+    const response = await request.get(path);
+    expect(response.ok()).toBe(true);
+    expect(response.headers()["content-type"]).toContain(contentType);
+  }
+
+  const manifestResponse = await request.get("/manifest.webmanifest");
+  expect(manifestResponse.ok()).toBe(true);
+  const manifest = await manifestResponse.json();
+  expect(manifest).toMatchObject({
+    name: "LIBERO EDA",
+    start_url: "/data/",
+    display: "standalone",
+    background_color: "#f4f3ef",
+    theme_color: "#2f6f62",
+  });
+  expect(manifest.icons).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ sizes: "192x192", purpose: "any" }),
+      expect.objectContaining({ sizes: "512x512", purpose: "maskable" }),
+    ]),
+  );
+
+  await page.getByRole("button", { name: "About LIBERO EDA" }).click();
+  await page.getByRole("menuitem", { name: "Privacy notice" }).click();
+  await expect(page.getByRole("heading", { name: "Privacy Notice" })).toBeVisible();
+  await expect(page.getByText("libero-eda.video-orientation.v1")).toBeVisible();
+  await expect(page.getByText(/Vercel/i)).toHaveCount(0);
+
+  await page.goto("/terms/");
+  await expect(page.getByRole("heading", { name: "Terms of Use" })).toBeVisible();
+  await expect(page.getByText(/Apache License 2.0/)).toBeVisible();
+  await expect(page.getByText(/laws of Japan/)).toBeVisible();
+});
+
 test("Recorded Data loads both public trajectory datasets", async ({ page }) => {
   await page.goto("/data?task=libero%3Alibero_spatial%3A1");
   await expect(page.getByRole("button", { name: /Original LIBERO/ })).toHaveAttribute(

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">LIBERO EDA</title>
+  <desc id="description">LE monogram with a rainbow robot trajectory and current-position ring.</desc>
+  <defs>
+    <linearGradient id="trajectory" x1="70" y1="410" x2="446" y2="254" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f24a49"/>
+      <stop offset="0.2" stop-color="#f2c94c"/>
+      <stop offset="0.4" stop-color="#65c466"/>
+      <stop offset="0.6" stop-color="#39b9c7"/>
+      <stop offset="0.8" stop-color="#596ad8"/>
+      <stop offset="1" stop-color="#d24caf"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="104" fill="#214b43"/>
+  <g fill="none" stroke="#f4f3ef" stroke-width="34" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M122 132v190h96"/>
+    <path d="M292 132v190M292 132h102M292 227h82M292 322h102"/>
+  </g>
+  <path d="M72 400c102 18 203-8 278-58 26-17 48-39 66-65" fill="none" stroke="#102f2a" stroke-width="30" stroke-linecap="round" opacity=".5"/>
+  <path d="M72 400c102 18 203-8 278-58 26-17 48-39 66-65" fill="none" stroke="url(#trajectory)" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="416" cy="277" r="28" fill="#214b43" stroke="url(#trajectory)" stroke-width="12"/>
+  <circle cx="416" cy="277" r="7" fill="#f4f3ef"/>
+</svg>

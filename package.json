@@ -1,12 +1,20 @@
 {
   "name": "libero-eda",
-  "version": "0.1.6",
+  "version": "0.1.7",
+  "description": "Browser-based explorer for LIBERO and LIBERO-Plus datasets.",
+  "author": "ekunish",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ekunish/libero-eda.git"
+  },
   "private": true,
   "packageManager": "pnpm@11.21.0",
   "type": "module",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 5602",
     "build": "next build",
+    "brand:generate": "node tools/generate_brand_assets.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint . && eslint . --max-warnings=0",
@@ -75,6 +83,7 @@
     "msw-storybook-addon": "3.0.0",
     "pngjs": "7.0.0",
     "postcss": "8.5.26",
+    "sharp": "0.35.3",
     "steiger": "0.6.0",
     "storybook": "10.5.7",
     "tailwindcss": "4.3.3",
