@@ -865,7 +865,7 @@ function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: numbe
         showSymbol: false,
         silent: true,
         lineStyle: {
-          color: style.color,
+          color: segment.color,
           opacity: regionOpacity[segment.region],
           width: style.lineWidth,
           type: style.lineType,
@@ -880,7 +880,7 @@ function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: numbe
         showSymbol: false,
         silent: true,
         lineStyle: {
-          color: style.color,
+          color: segment.color,
           opacity: regionOpacity[segment.region],
           width: style.lineWidth,
           type: style.lineType,

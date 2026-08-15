@@ -12,12 +12,20 @@ export type GripperTrajectorySegment = {
 export const GRIPPER_TRAJECTORY_STYLES = {
   open: {
     label: "Open command",
-    color: "#29c7aa",
-    gradient: ["hsl(145 88% 57%)", "hsl(200 88% 57%)"],
-    hueRange: [145, 200] as const,
+    color: "#2fb8d3",
+    gradient: [
+      "hsl(0 88% 57%)",
+      "hsl(60 88% 57%)",
+      "hsl(120 88% 57%)",
+      "hsl(180 88% 57%)",
+      "hsl(240 88% 57%)",
+      "hsl(300 88% 57%)",
+      "hsl(360 88% 57%)",
+    ],
+    hueRange: [0, 360] as const,
     rgb: [0.16, 0.78, 0.67] as const,
     lineType: "solid",
-    lineWidth: 2.2,
+    lineWidth: 2.8,
   },
   closed: {
     label: "Close command",
@@ -26,7 +34,7 @@ export const GRIPPER_TRAJECTORY_STYLES = {
     hueRange: [315, 380] as const,
     rgb: [0.94, 0.35, 0.46] as const,
     lineType: "solid",
-    lineWidth: 2.8,
+    lineWidth: 3.2,
   },
   unknown: {
     label: "Unknown",
@@ -35,7 +43,7 @@ export const GRIPPER_TRAJECTORY_STYLES = {
     hueRange: null,
     rgb: [0.48, 0.52, 0.5] as const,
     lineType: "solid",
-    lineWidth: 2.2,
+    lineWidth: 2.6,
   },
 } as const;
 

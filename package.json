@@ -1,6 +1,6 @@
 {
   "name": "libero-eda",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "packageManager": "pnpm@11.21.0",
   "type": "module",
@@ -60,6 +60,7 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "22.20.1",
+    "@types/pngjs": "6.0.5",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@types/three": "0.185.4",
@@ -72,6 +73,7 @@
     "jsdom": "30.0.1",
     "msw": "2.15.0",
     "msw-storybook-addon": "3.0.0",
+    "pngjs": "7.0.0",
     "postcss": "8.5.26",
     "steiger": "0.6.0",
     "storybook": "10.5.7",

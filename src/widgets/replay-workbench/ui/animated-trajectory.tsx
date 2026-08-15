@@ -12,6 +12,7 @@ import {
 } from "../model/gripper-trajectory";
 import {
   cumulativeTrajectoryDistances,
+  TRAJECTORY_FLOW,
   trajectoryVertexRgba,
   writeTrajectorySegmentColors,
 } from "../model/trajectory-appearance";
@@ -32,49 +33,83 @@ function RainbowTrajectorySegment({
   frame: number;
   reducedMotion: boolean;
 }) {
-  const lineRef = useRef<ComponentRef<typeof Line>>(null);
-  const initialColors = useMemo(
+  const haloRef = useRef<ComponentRef<typeof Line>>(null);
+  const coreRef = useRef<ComponentRef<typeof Line>>(null);
+  const initialCoreColors = useMemo(
     () =>
       segment.cumulativeDistances.map((distance, index) =>
         trajectoryVertexRgba(segment.state, distance, segment.startIndex + index, 0, 0),
       ),
     [segment],
   );
+  const initialHaloColors = useMemo(
+    () =>
+      segment.cumulativeDistances.map((distance, index) =>
+        trajectoryVertexRgba(
+          segment.state,
+          distance,
+          segment.startIndex + index,
+          0,
+          0,
+          TRAJECTORY_FLOW.haloOpacityScale,
+        ),
+      ),
+    [segment],
+  );
 
   useFrame(({ clock }) => {
-    const line = lineRef.current;
-    if (!line) return;
-    const start = line.geometry.getAttribute("instanceColorStart");
-    const end = line.geometry.getAttribute("instanceColorEnd");
-    if (
-      !(start instanceof THREE.InterleavedBufferAttribute) ||
-      !(end instanceof THREE.InterleavedBufferAttribute) ||
-      start.data !== end.data ||
-      !(start.data.array instanceof Float32Array)
-    ) {
-      throw new Error("Rainbow trajectory requires one shared RGBA interleaved color buffer.");
+    const elapsedSeconds = reducedMotion ? 0 : clock.getElapsedTime();
+    for (const [line, opacityScale] of [
+      [haloRef.current, TRAJECTORY_FLOW.haloOpacityScale],
+      [coreRef.current, 1],
+    ] as const) {
+      if (!line) continue;
+      const start = line.geometry.getAttribute("instanceColorStart");
+      const end = line.geometry.getAttribute("instanceColorEnd");
+      if (
+        !(start instanceof THREE.InterleavedBufferAttribute) ||
+        !(end instanceof THREE.InterleavedBufferAttribute) ||
+        start.data !== end.data ||
+        !(start.data.array instanceof Float32Array)
+      ) {
+        throw new Error("Rainbow trajectory requires one shared RGBA interleaved color buffer.");
+      }
+      writeTrajectorySegmentColors(
+        start.data.array,
+        segment.state,
+        segment.cumulativeDistances,
+        segment.startIndex,
+        frame,
+        elapsedSeconds,
+        opacityScale,
+      );
+      start.data.needsUpdate = true;
     }
-    writeTrajectorySegmentColors(
-      start.data.array,
-      segment.state,
-      segment.cumulativeDistances,
-      segment.startIndex,
-      frame,
-      reducedMotion ? 0 : clock.getElapsedTime(),
-    );
-    start.data.needsUpdate = true;
   });
 
   return (
-    <Line
-      ref={lineRef}
-      points={segment.points}
-      vertexColors={initialColors}
-      lineWidth={GRIPPER_TRAJECTORY_STYLES[segment.state].lineWidth}
-      depthWrite={false}
-      alphaToCoverage
-      renderOrder={10}
-    />
+    <>
+      <Line
+        ref={haloRef}
+        points={segment.points}
+        vertexColors={initialHaloColors}
+        lineWidth={
+          GRIPPER_TRAJECTORY_STYLES[segment.state].lineWidth + TRAJECTORY_FLOW.haloWidthAddition
+        }
+        depthWrite={false}
+        alphaToCoverage
+        renderOrder={9}
+      />
+      <Line
+        ref={coreRef}
+        points={segment.points}
+        vertexColors={initialCoreColors}
+        lineWidth={GRIPPER_TRAJECTORY_STYLES[segment.state].lineWidth}
+        depthWrite={false}
+        alphaToCoverage
+        renderOrder={10}
+      />
+    </>
   );
 }
 

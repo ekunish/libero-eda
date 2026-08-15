@@ -7,13 +7,15 @@ import {
 
 export const TRAJECTORY_FLOW = {
   spatialPeriodMeters: 0.16,
-  cyclesPerSecond: 0.18,
+  cyclesPerSecond: 0.4,
   saturation: 0.88,
   lightness: 0.57,
-  pastOpacity: 0.18,
-  futureOpacity: 0.68,
+  pastOpacity: 0.5,
+  futureOpacity: 0.78,
   pastTransitionFrames: 8,
   futureTransitionFrames: 6,
+  haloWidthAddition: 9,
+  haloOpacityScale: 0.34,
 } as const;
 
 export type TrajectoryTemporalRegion = "past" | "current" | "future";
@@ -21,6 +23,7 @@ export type TrajectoryTemporalRegion = "past" | "current" | "future";
 export type StaticTrajectorySegment = {
   state: GripperCommandState;
   region: TrajectoryTemporalRegion;
+  color: string;
   startIndex: number;
   endIndex: number;
   points: TrajectoryPoint[];
@@ -38,6 +41,10 @@ function interpolate(start: number, end: number, amount: number): number {
 
 function wrapDegrees(value: number): number {
   return ((value % 360) + 360) % 360;
+}
+
+function wrapUnit(value: number): number {
+  return value - Math.floor(value);
 }
 
 function hslToRgb(hueDegrees: number, saturation: number, lightness: number) {
@@ -107,16 +114,21 @@ export function trajectoryHueDegrees(
 ): number | null {
   const range = GRIPPER_TRAJECTORY_STYLES[state].hueRange;
   if (!range) return null;
-  const wave =
-    0.5 +
-    0.5 *
-      Math.sin(
-        Math.PI *
-          2 *
-          (cumulativeDistance / TRAJECTORY_FLOW.spatialPeriodMeters -
-            elapsedSeconds * TRAJECTORY_FLOW.cyclesPerSecond),
-      );
-  return wrapDegrees(interpolate(range[0], range[1], wave));
+  const phase = wrapUnit(
+    cumulativeDistance / TRAJECTORY_FLOW.spatialPeriodMeters -
+      elapsedSeconds * TRAJECTORY_FLOW.cyclesPerSecond,
+  );
+  return wrapDegrees(interpolate(range[0], range[1], phase));
+}
+
+export function trajectoryCssColor(
+  state: GripperCommandState,
+  cumulativeDistance: number,
+  elapsedSeconds: number,
+): string {
+  const hue = trajectoryHueDegrees(state, cumulativeDistance, elapsedSeconds);
+  if (hue === null) return GRIPPER_TRAJECTORY_STYLES.unknown.color;
+  return `hsl(${hue.toFixed(2)} ${(TRAJECTORY_FLOW.saturation * 100).toFixed(0)}% ${(TRAJECTORY_FLOW.lightness * 100).toFixed(0)}%)`;
 }
 
 export function trajectoryVertexRgba(
@@ -125,13 +137,14 @@ export function trajectoryVertexRgba(
   pointIndex: number,
   currentFrame: number,
   elapsedSeconds: number,
+  opacityScale = 1,
 ): RgbaTuple {
   const hue = trajectoryHueDegrees(state, cumulativeDistance, elapsedSeconds);
   const [red, green, blue] =
     hue === null
       ? GRIPPER_TRAJECTORY_STYLES.unknown.rgb
       : hslToRgb(hue, TRAJECTORY_FLOW.saturation, TRAJECTORY_FLOW.lightness);
-  return [red, green, blue, trajectoryTemporalOpacity(pointIndex, currentFrame)];
+  return [red, green, blue, trajectoryTemporalOpacity(pointIndex, currentFrame) * opacityScale];
 }
 
 export function writeTrajectorySegmentColors(
@@ -141,6 +154,7 @@ export function writeTrajectorySegmentColors(
   startIndex: number,
   currentFrame: number,
   elapsedSeconds: number,
+  opacityScale = 1,
 ): void {
   const expectedLength = Math.max(0, cumulativeDistances.length - 1) * 8;
   if (target.length !== expectedLength) {
@@ -156,6 +170,7 @@ export function writeTrajectorySegmentColors(
       startIndex + edge,
       currentFrame,
       elapsedSeconds,
+      opacityScale,
     );
     const end = trajectoryVertexRgba(
       state,
@@ -163,6 +178,7 @@ export function writeTrajectorySegmentColors(
       startIndex + edge + 1,
       currentFrame,
       elapsedSeconds,
+      opacityScale,
     );
     target.set(start, offset);
     target.set(end, offset + 4);
@@ -181,6 +197,7 @@ export function buildStaticTrajectorySegments(
   currentFrame: number,
 ): StaticTrajectorySegment[] {
   const result: StaticTrajectorySegment[] = [];
+  const cumulativeDistances = cumulativeTrajectoryDistances(positions);
   for (const commandSegment of buildGripperTrajectorySegments(positions, actions)) {
     for (
       let edgeIndex = commandSegment.startIndex;
@@ -192,19 +209,16 @@ export function buildStaticTrajectorySegments(
       const end = commandSegment.points[localIndex + 1];
       if (!start || !end) throw new Error(`Trajectory segment ${edgeIndex} is incomplete.`);
       const region = temporalRegionForEdge(edgeIndex, currentFrame);
-      const current = result.at(-1);
-      if (current?.state === commandSegment.state && current.region === region) {
-        current.points.push(end);
-        current.endIndex = edgeIndex + 1;
-      } else {
-        result.push({
-          state: commandSegment.state,
-          region,
-          startIndex: edgeIndex,
-          endIndex: edgeIndex + 1,
-          points: [start, end],
-        });
-      }
+      const startDistance = cumulativeDistances[edgeIndex] ?? 0;
+      const endDistance = cumulativeDistances[edgeIndex + 1] ?? startDistance;
+      result.push({
+        state: commandSegment.state,
+        region,
+        color: trajectoryCssColor(commandSegment.state, (startDistance + endDistance) / 2, 0),
+        startIndex: edgeIndex,
+        endIndex: edgeIndex + 1,
+        points: [start, end],
+      });
     }
   }
   return result;

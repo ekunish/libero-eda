@@ -1,4 +1,22 @@
 import { expect, test } from "@playwright/test";
+import { PNG } from "pngjs";
+
+function visiblyChangedPixelRatio(before: Buffer, after: Buffer, channelThreshold = 6): number {
+  const first = PNG.sync.read(before);
+  const second = PNG.sync.read(after);
+  expect({ width: first.width, height: first.height }).toEqual({
+    width: second.width,
+    height: second.height,
+  });
+  let changed = 0;
+  for (let offset = 0; offset < first.data.length; offset += 4) {
+    const red = Math.abs((first.data[offset] ?? 0) - (second.data[offset] ?? 0));
+    const green = Math.abs((first.data[offset + 1] ?? 0) - (second.data[offset + 1] ?? 0));
+    const blue = Math.abs((first.data[offset + 2] ?? 0) - (second.data[offset + 2] ?? 0));
+    if (Math.max(red, green, blue) >= channelThreshold) changed += 1;
+  }
+  return changed / (first.width * first.height);
+}
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -124,9 +142,9 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
   const spatial = page.getByTestId("spatial-viewport");
   await page.waitForTimeout(500);
   const rainbowBefore = await spatial.screenshot();
-  await page.waitForTimeout(650);
+  await page.waitForTimeout(750);
   const rainbowAfter = await spatial.screenshot();
-  expect(rainbowBefore.equals(rainbowAfter)).toBe(false);
+  expect(visiblyChangedPixelRatio(rainbowBefore, rainbowAfter)).toBeGreaterThanOrEqual(0.0035);
   expect(await playhead.inputValue()).toBe(frameBefore);
 
   await page.getByRole("button", { name: "Play" }).click();

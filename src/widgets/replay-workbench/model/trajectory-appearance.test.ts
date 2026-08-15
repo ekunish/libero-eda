@@ -26,14 +26,22 @@ describe("trajectory appearance", () => {
     ).toThrow(/finite XYZ/);
   });
 
-  it("keeps open and closed hues in separate moving bands", () => {
-    const openAtStart = trajectoryHueDegrees("open", 0, 0);
-    const openLater = trajectoryHueDegrees("open", 0, 1);
-    const closedAtStart = trajectoryHueDegrees("closed", 0, 0);
-    expect(openAtStart).toBeGreaterThanOrEqual(145);
-    expect(openAtStart).toBeLessThanOrEqual(200);
-    expect(openLater).not.toBeCloseTo(openAtStart ?? 0);
-    expect(closedAtStart === null || closedAtStart >= 315 || closedAtStart <= 20).toBe(true);
+  it("moves open commands through the full rainbow and closed commands through warm hues", () => {
+    const hueDistance = (left: number, right: number) => {
+      const delta = Math.abs(left - right);
+      return Math.min(delta, 360 - delta);
+    };
+    const openSamples = [0, 0.04, 0.08, 0.12].map(
+      (distance) => trajectoryHueDegrees("open", distance, 0) ?? 0,
+    );
+    expect(openSamples).toEqual([0, 90, 180, 270]);
+    const openLater = trajectoryHueDegrees("open", 0, 0.75) ?? 0;
+    expect(hueDistance(openSamples[0] ?? 0, openLater)).toBeGreaterThanOrEqual(90);
+
+    const closedAtStart = trajectoryHueDegrees("closed", 0, 0) ?? 0;
+    const closedLater = trajectoryHueDegrees("closed", 0, 0.75) ?? 0;
+    expect([closedAtStart, closedLater].every((hue) => hue >= 315 || hue <= 20)).toBe(true);
+    expect(hueDistance(closedAtStart, closedLater)).toBeGreaterThanOrEqual(15);
     expect(trajectoryHueDegrees("unknown", 0, 0)).toBeNull();
   });
 
@@ -51,6 +59,17 @@ describe("trajectory appearance", () => {
     expect(Array.from(target).every(Number.isFinite)).toBe(true);
     expect(target[3]).toBeLessThan(target[7] ?? 0);
     expect(target[7]).toBe(target[11]);
+    const halo = new Float32Array(16);
+    writeTrajectorySegmentColors(
+      halo,
+      "open",
+      [0, 0.08, 0.16],
+      10,
+      11,
+      0,
+      TRAJECTORY_FLOW.haloOpacityScale,
+    );
+    expect(halo[7]).toBeCloseTo((target[7] ?? 0) * TRAJECTORY_FLOW.haloOpacityScale);
     expect(() =>
       writeTrajectorySegmentColors(new Float32Array(4), "open", [0, 0.08], 0, 0, 0),
     ).toThrow(/buffer length/);
@@ -88,6 +107,7 @@ describe("trajectory appearance", () => {
       { state: "closed", region: "future", startIndex: 3, endIndex: 4 },
     ]);
     expect(segments[0]?.points.at(-1)).toEqual(segments[1]?.points[0]);
+    expect(segments[0]?.color).not.toBe(segments[1]?.color);
     expect(trajectoryVertexRgba("unknown", 0, 0, 0, 1).slice(0, 3)).toEqual([0.48, 0.52, 0.5]);
   });
 });
