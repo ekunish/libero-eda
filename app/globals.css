@@ -109,6 +109,38 @@
   --shadow: 0 1px 2px rgb(31 35 32 / 5%);
 }
 
+.eda-skeleton {
+  background-color: color-mix(in srgb, var(--color-base-300) 72%, var(--color-base-100));
+  background-image: linear-gradient(
+    100deg,
+    transparent 42%,
+    rgb(255 255 255 / 12%) 50%,
+    transparent 58%
+  );
+  background-position: 150% 0;
+  background-size: 220% 100%;
+  animation: eda-skeleton-shimmer 3.4s ease-in-out infinite;
+}
+
+@keyframes eda-skeleton-shimmer {
+  0%,
+  18% {
+    background-position: 150% 0;
+  }
+
+  82%,
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eda-skeleton {
+    background-image: none;
+    animation: none;
+  }
+}
+
 * {
   box-sizing: border-box;
   border-color: var(--line);

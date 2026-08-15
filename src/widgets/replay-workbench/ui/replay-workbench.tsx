@@ -2,7 +2,7 @@
 
 import { OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { EChartsOption, SeriesOption } from "echarts";
 import {
   ArrowLeft,
@@ -53,17 +53,14 @@ import {
   type ReplayManifest,
   type ReplaySeries,
   type ReplayVideo,
+  type TaskDetail,
 } from "@/shared/api";
 import { cn, fixed, formatDuration } from "@/shared/lib/utils";
 import { Chart, chartTextColor } from "@/shared/ui/chart";
 import { Badge, Button, ErrorPanel, IconButton, Select, Skeleton } from "@/shared/ui/primitives";
 import { fixedCameraPoseFromCalibration } from "../model/camera-pose";
 import { rotationVectorQuaternion } from "../model/eef-orientation";
-import {
-  buildGripperTrajectorySegments,
-  GRIPPER_TRAJECTORY_STYLES,
-  type GripperCommandState,
-} from "../model/gripper-trajectory";
+import { GRIPPER_TRAJECTORY_STYLES } from "../model/gripper-trajectory";
 import {
   aggregateAmbient,
   createMujocoCubeTexture,
@@ -82,6 +79,14 @@ import {
 } from "../model/replay-context-url";
 import { shouldHideSceneNode } from "../model/scene-visibility";
 import {
+  createDestinationTaskCueOutline,
+  disposeTaskCueOutline,
+  type ManipulatedCueMaterial,
+  setTaskCueOutlinesVisible,
+  updateManipulatedTaskCue,
+} from "../model/task-cue-appearance";
+import { resolveTaskCues, type TaskCueBody, type TaskCueResolution } from "../model/task-cues";
+import {
   buildStaticTrajectorySegments,
   TRAJECTORY_FLOW,
   type TrajectoryTemporalRegion,
@@ -98,6 +103,8 @@ import {
 import { clampVideoTime, videoTimeForSeriesFrame } from "../model/video-time";
 import { AnimatedRainbowTrajectory } from "./animated-trajectory";
 import { ReplayNavigator } from "./replay-navigator";
+
+const EMPTY_TASK_CUE_BODIES: TaskCueBody[] = [];
 
 function PlaybackTicker() {
   const playing = usePlayback((state) => state.playing);
@@ -498,11 +505,17 @@ function DigitalTwin({
   manifest,
   series,
   frame,
+  taskCueBodies,
+  taskCuesEnabled,
+  reducedMotion,
   onReady,
 }: {
   manifest: ReplayManifest;
   series: ReplaySeries;
   frame: number;
+  taskCueBodies: TaskCueBody[];
+  taskCuesEnabled: boolean;
+  reducedMotion: boolean;
   onReady: () => void;
 }) {
   const gltf = useGLTF(mediaUrl(manifest.scene_asset_id as string)) as {
@@ -519,10 +532,17 @@ function DigitalTwin({
         : null,
     [gltf.parser.json, manifest.scene_schema],
   );
+  const taskCueRoles = useMemo(
+    () => new Map(taskCueBodies.map((body) => [body.bodyName, new Set(body.roles)])),
+    [taskCueBodies],
+  );
   const scene = useMemo(() => {
     const clone = gltf.scene.clone(true);
     const cubeBySource = new Map<THREE.Texture, THREE.CubeTexture>();
     const cubeTextures = new Set<THREE.CubeTexture>();
+    const manipulatedMaterials: ManipulatedCueMaterial[] = [];
+    const destinationMeshes: THREE.Mesh[] = [];
+    const destinationOutlines: THREE.LineSegments[] = [];
     const shadows = render?.lights.some((light) => light.active && light.cast_shadow) ?? false;
     clone.traverse((object) => {
       if (shouldHideSceneNode(manifest.scene_schema, object.name)) {
@@ -559,10 +579,39 @@ function DigitalTwin({
       object.castShadow = shadows;
       object.receiveShadow = shadows;
       addPlanarReflector(object);
+      const bodyIndex = object.userData.mujocoBodyIndex as number | undefined;
+      const bodyName = bodyIndex == null ? undefined : manifest.body_names[bodyIndex];
+      const roles = bodyName ? taskCueRoles.get(bodyName) : undefined;
+      if (roles?.has("manipulated")) {
+        for (const material of converted) {
+          manipulatedMaterials.push({
+            material,
+            baseEmissive: material.emissive.clone(),
+            baseIntensity: material.emissiveIntensity,
+          });
+        }
+      }
+      if (roles?.has("destination")) destinationMeshes.push(object);
     });
+    for (const mesh of destinationMeshes) {
+      const outline = createDestinationTaskCueOutline(mesh);
+      mesh.add(outline);
+      destinationOutlines.push(outline);
+    }
     clone.userData.parcMujocoCubeTextures = cubeTextures;
+    clone.userData.parcTaskCueMaterials = manipulatedMaterials;
+    clone.userData.parcTaskCueOutlines = destinationOutlines;
     return clone;
-  }, [gltf.scene, manifest.scene_schema, render]);
+  }, [gltf.scene, manifest.body_names, manifest.scene_schema, render, taskCueRoles]);
+  useFrame(({ clock }) => {
+    const materials = scene.userData.parcTaskCueMaterials as ManipulatedCueMaterial[] | undefined;
+    const outlines = scene.userData.parcTaskCueOutlines as THREE.LineSegments[] | undefined;
+    const phase = reducedMotion ? 0.5 : (Math.sin(clock.getElapsedTime() * Math.PI * 2) + 1) / 2;
+    for (const binding of materials ?? []) {
+      updateManipulatedTaskCue(binding, taskCuesEnabled, phase);
+    }
+    setTaskCueOutlinesVisible(outlines ?? [], taskCuesEnabled);
+  });
   useEffect(
     () => () => {
       scene.traverse((object) => {
@@ -577,6 +626,9 @@ function DigitalTwin({
           for (const material of materials) material.dispose();
           object.getRenderTarget().dispose();
           if (object.userData.parcOwnsGeometry) object.geometry.dispose();
+        }
+        if (object instanceof THREE.LineSegments && object.userData.parcTaskCueOutline) {
+          disposeTaskCueOutline(object);
         }
       });
       const cubeTextures = scene.userData.parcMujocoCubeTextures as
@@ -652,6 +704,8 @@ function TrajectoryScene({
   cameraReset,
   sceneAttempt,
   reducedMotion,
+  taskCueBodies,
+  taskCuesEnabled,
   onSceneReady,
   onSceneError,
 }: {
@@ -663,6 +717,8 @@ function TrajectoryScene({
   cameraReset: number;
   sceneAttempt: number;
   reducedMotion: boolean;
+  taskCueBodies: TaskCueBody[];
+  taskCuesEnabled: boolean;
   onSceneReady: () => void;
   onSceneError: (error: Error) => void;
 }) {
@@ -702,12 +758,22 @@ function TrajectoryScene({
   const motionDescription = reducedMotion
     ? "Rainbow motion is frozen by the reduced-motion preference."
     : "The rainbow flows continuously, including while Replay is paused.";
+  const manipulatedBodyCount = taskCueBodies.filter((body) =>
+    body.roles.includes("manipulated"),
+  ).length;
+  const destinationBodyCount = taskCueBodies.filter((body) =>
+    body.roles.includes("destination"),
+  ).length;
+  const taskCueDescription =
+    showTwin && taskCuesEnabled && taskCueBodies.length
+      ? ` Task cues highlight ${manipulatedBodyCount} manipulated bodies with a pulse and ${destinationBodyCount} destination bodies with an outline.`
+      : "";
   return (
     <Canvas
       role="img"
       aria-label={
         showTwin
-          ? `3D view of the robot, objects, and EEF trajectory. Hue encodes the gripper command, opacity distinguishes passed, current, and upcoming points, and the ring marker follows the current trajectory hue. ${motionDescription} Current frame ${frame}.`
+          ? `3D view of the robot, objects, and EEF trajectory. Hue encodes the gripper command, opacity distinguishes passed, current, and upcoming points, and the ring marker follows the current trajectory hue. ${motionDescription}${taskCueDescription} Current frame ${frame}.`
           : `3D view of the EEF trajectory. Hue encodes the gripper command, opacity distinguishes passed, current, and upcoming points, and the ring marker follows the current trajectory hue. ${motionDescription} Current frame ${frame}.`
       }
       gl={{ antialias: true, alpha: true, toneMapping: THREE.NoToneMapping }}
@@ -740,7 +806,15 @@ function TrajectoryScene({
           onError={onSceneError}
         >
           <Suspense fallback={null}>
-            <DigitalTwin manifest={manifest} series={series} frame={frame} onReady={onSceneReady} />
+            <DigitalTwin
+              manifest={manifest}
+              series={series}
+              frame={frame}
+              taskCueBodies={taskCueBodies}
+              taskCuesEnabled={taskCuesEnabled}
+              reducedMotion={reducedMotion}
+              onReady={onSceneReady}
+            />
           </Suspense>
         </SceneModelErrorBoundary>
       ) : null}
@@ -763,85 +837,6 @@ function TrajectoryScene({
         dampingFactor={0.08}
       />
     </Canvas>
-  );
-}
-
-function GripperTrajectoryLegend({
-  series,
-  frame,
-  reducedMotion,
-}: {
-  series: ReplaySeries;
-  frame: number;
-  reducedMotion: boolean;
-}) {
-  const trajectorySegments = useMemo(
-    () => buildGripperTrajectorySegments(series.ee_positions, series.actions),
-    [series.actions, series.ee_positions],
-  );
-  const states: GripperCommandState[] = ["open", "closed"];
-  if (trajectorySegments.some((segment) => segment.state === "unknown")) states.push("unknown");
-  return (
-    <figure
-      aria-label="Trajectory hue by gripper command and opacity by passage"
-      className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-base-100/90 px-2 py-1 text-xs text-[var(--muted)] shadow-sm"
-    >
-      {states.map((state) => {
-        const style = GRIPPER_TRAJECTORY_STYLES[state];
-        return (
-          <span key={state} className="flex items-center gap-1.5">
-            <span
-              aria-hidden
-              className="h-1 w-5 rounded-full"
-              style={{ backgroundImage: `linear-gradient(90deg, ${style.gradient.join(", ")})` }}
-            />
-            {style.label}
-          </span>
-        );
-      })}
-      {(
-        [
-          ["Passed", TRAJECTORY_FLOW.pastOpacity],
-          ["Current", 1],
-          ["Ahead", TRAJECTORY_FLOW.futureOpacity],
-        ] as const
-      ).map(([label, opacity]) => (
-        <span key={label} className="flex items-center gap-1.5">
-          <span aria-hidden className="h-1 w-4 rounded-full bg-base-content" style={{ opacity }} />
-          {label}
-        </span>
-      ))}
-      <span className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className="grid size-3 place-items-center rounded-full"
-          style={{
-            background:
-              "conic-gradient(hsl(0 88% 57%), hsl(90 88% 57%), hsl(180 88% 57%), hsl(270 88% 57%), hsl(360 88% 57%))",
-          }}
-        >
-          <span className="size-1.5 rounded-full bg-base-100" />
-        </span>
-        Current position · follows trajectory hue
-      </span>
-      <span>
-        {reducedMotion ? "Rainbow frozen by reduced-motion" : "Rainbow flows continuously"}
-      </span>
-      {rotationVectorQuaternion(series.ee_axis_angle?.[frame]) ? (
-        <span className="flex items-center gap-1.5">
-          <span aria-hidden className="font-semibold text-[#d94747]">
-            R
-          </span>
-          <span aria-hidden className="font-semibold text-[#48a14d]">
-            G
-          </span>
-          <span aria-hidden className="font-semibold text-[#3976d4]">
-            B
-          </span>
-          axes (R=X, G=Y, B=Z) · current EEF orientation
-        </span>
-      ) : null}
-    </figure>
   );
 }
 
@@ -1200,31 +1195,46 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const searchParams = useSearchParams();
   const reducedMotion = useReducedMotion();
   const serializedReplayParams = searchParams.toString();
-  const manifestQuery = useQuery({
-    queryKey: ["replay", replayId],
-    queryFn: () => api<ReplayManifest>(`/replays/${replayId}`),
-  });
-  const seriesQuery = useQuery({
-    queryKey: ["replay-series", replayId],
-    queryFn: () => api<ReplaySeries>(`/replays/${replayId}/series`),
-    enabled: Boolean(manifestQuery.data),
+  const workspaceQuery = useQuery({
+    queryKey: ["replay-workspace", replayId],
+    queryFn: async () => {
+      const [manifest, series] = await Promise.all([
+        api<ReplayManifest>(`/replays/${replayId}`),
+        api<ReplaySeries>(`/replays/${replayId}/series`),
+      ]);
+      return { replayId, manifest, series };
+    },
+    placeholderData: keepPreviousData,
     staleTime: Infinity,
   });
+  const workspaceReadyForRoute = Boolean(workspaceQuery.data && !workspaceQuery.isPlaceholderData);
+  const displayedReplayId = workspaceQuery.data?.replayId ?? replayId;
+  const displayedManifest = workspaceQuery.data?.manifest;
+  const displayedSeries = workspaceQuery.data?.series;
   const canonicalReplayParams = useMemo(
     () =>
-      manifestQuery.data
-        ? sanitizeReplayParams(new URLSearchParams(serializedReplayParams), manifestQuery.data)
+      workspaceReadyForRoute && displayedManifest
+        ? sanitizeReplayParams(new URLSearchParams(serializedReplayParams), displayedManifest)
         : new URLSearchParams(serializedReplayParams),
-    [manifestQuery.data, serializedReplayParams],
+    [displayedManifest, serializedReplayParams, workspaceReadyForRoute],
   );
   const canonicalReplayParamsString = canonicalReplayParams.toString();
+  const displayedReplayParams = useMemo(
+    () =>
+      displayedManifest
+        ? sanitizeReplayParams(new URLSearchParams(serializedReplayParams), displayedManifest)
+        : new URLSearchParams(serializedReplayParams),
+    [displayedManifest, serializedReplayParams],
+  );
+  const displayedReplayParamsString = displayedReplayParams.toString();
   const contextQuery = useQuery({
-    queryKey: ["replay-context", replayId, canonicalReplayParamsString],
+    queryKey: ["replay-context", displayedReplayId, displayedReplayParamsString],
     queryFn: () =>
       api<ReplayContext>(
-        replayContextPath(replayId, new URLSearchParams(canonicalReplayParamsString)),
+        replayContextPath(displayedReplayId, new URLSearchParams(displayedReplayParamsString)),
       ),
-    enabled: Boolean(manifestQuery.data),
+    enabled: Boolean(displayedManifest),
+    placeholderData: keepPreviousData,
   });
   const configure = usePlayback((state) => state.configure);
   const frame = usePlayback((state) => state.frame);
@@ -1246,16 +1256,34 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const hasTwin = Boolean(
-    manifestQuery.data?.scene_asset_id && seriesQuery.data?.body_positions.length,
+    displayedManifest?.scene_asset_id && displayedSeries?.body_positions.length,
   );
-  const sceneAssetId = manifestQuery.data?.scene_asset_id ?? null;
+  const taskDetailQuery = useQuery({
+    queryKey: ["task-detail", displayedManifest?.task_key],
+    queryFn: () =>
+      api<TaskDetail>(`/tasks/${encodeURIComponent(displayedManifest?.task_key ?? "")}`),
+    enabled: hasTwin && Boolean(displayedManifest?.task_key),
+    staleTime: Infinity,
+  });
+  const taskCueResolution = useMemo<TaskCueResolution | null>(() => {
+    if (!hasTwin) return null;
+    if (!displayedManifest?.task_key) {
+      return { status: "unavailable", reason: "This replay has no task definition key" };
+    }
+    if (!taskDetailQuery.data) return null;
+    return resolveTaskCues(taskDetailQuery.data.bddl, displayedManifest.body_names);
+  }, [displayedManifest, hasTwin, taskDetailQuery.data]);
+  const taskCueBodies =
+    taskCueResolution?.status === "resolved" ? taskCueResolution.bodies : EMPTY_TASK_CUE_BODIES;
+  const [taskCuesEnabled, setTaskCuesEnabled] = useState(true);
+  const sceneAssetId = displayedManifest?.scene_asset_id ?? null;
   const [sceneModelLoad, setSceneModelLoad] = useState<SceneModelLoadState | null>(null);
   const currentSceneModelLoad =
     sceneAssetId && sceneModelLoad?.assetId === sceneAssetId ? sceneModelLoad : null;
   const sceneModelPhase = sceneAssetId ? (currentSceneModelLoad?.phase ?? "loading") : null;
   const sceneAttempt = currentSceneModelLoad?.attempt ?? 0;
   const hasAgentviewCalibration = Boolean(
-    manifestQuery.data?.scene_cameras.some(
+    displayedManifest?.scene_cameras.some(
       (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
     ),
   );
@@ -1293,15 +1321,21 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     }));
   }, [sceneAssetId]);
   useEffect(() => {
-    if (manifestQuery.data) configure(manifestQuery.data.state_count - 1, manifestQuery.data.fps);
+    if (displayedManifest) configure(displayedManifest.state_count - 1, displayedManifest.fps);
     return () => usePlayback.getState().reset();
-  }, [manifestQuery.data, configure]);
+  }, [displayedManifest, configure]);
   useEffect(() => {
-    if (!manifestQuery.data || canonicalReplayParamsString === serializedReplayParams) return;
+    if (!workspaceReadyForRoute || canonicalReplayParamsString === serializedReplayParams) return;
     router.replace(replayHref(replayId, new URLSearchParams(canonicalReplayParamsString)), {
       scroll: false,
     });
-  }, [canonicalReplayParamsString, manifestQuery.data, replayId, router, serializedReplayParams]);
+  }, [
+    canonicalReplayParamsString,
+    replayId,
+    router,
+    serializedReplayParams,
+    workspaceReadyForRoute,
+  ]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (
@@ -1327,12 +1361,12 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             : null;
       if (targetId) {
         event.preventDefault();
-        router.push(replayHref(targetId, new URLSearchParams(canonicalReplayParamsString), true));
+        router.push(replayHref(targetId, new URLSearchParams(displayedReplayParamsString), true));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePlaying, step, contextQuery.data, router, canonicalReplayParamsString]);
+  }, [togglePlaying, step, contextQuery.data, router, displayedReplayParamsString]);
   useEffect(() => {
     const onFullscreen = () => setFullscreen(document.fullscreenElement === replayRootRef.current);
     document.addEventListener("fullscreenchange", onFullscreen);
@@ -1348,11 +1382,10 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     if (document.fullscreenElement) await document.exitFullscreen();
     await target.requestFullscreen();
   };
-  if (manifestQuery.isError) return <ErrorPanel error={manifestQuery.error} />;
-  if (seriesQuery.isError) return <ErrorPanel error={seriesQuery.error} />;
-  if (!manifestQuery.data || !seriesQuery.data) return <ReplayWorkbenchSkeleton />;
-  const manifest = manifestQuery.data;
-  const series = seriesQuery.data;
+  if (workspaceQuery.isError) return <ErrorPanel error={workspaceQuery.error} />;
+  if (!displayedManifest || !displayedSeries) return <ReplayWorkbenchSkeleton />;
+  const manifest = displayedManifest;
+  const series = displayedSeries;
   const videos = manifest.videos.filter(hasRecordedVideoDimensions);
   if (videos.length !== manifest.videos.length) {
     return (
@@ -1387,10 +1420,13 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
       : manifest.dataset_id === "lerobot_libero_plus"
         ? `Dataset episode #${manifest.source_episode_id ?? manifest.episode_id}`
         : `Episode ${manifest.episode_id}`;
-  const replayParams = new URLSearchParams(canonicalReplayParamsString);
+  const replayParams = new URLSearchParams(displayedReplayParamsString);
   const previousReplayId = contextQuery.data?.previous_replay_id;
   const nextReplayId = contextQuery.data?.next_replay_id;
-  const currentContextItem = contextQuery.data?.items.find((item) => item.replay_id === replayId);
+  const currentContextItem = contextQuery.data?.items.find(
+    (item) => item.replay_id === displayedReplayId,
+  );
+  const isReplayTransition = workspaceQuery.isPlaceholderData;
   const requestedReturn = safeReplayReturnPath(searchParams.get("return_to"));
   const defaultReturn =
     manifest.source === "dataset"
@@ -1533,6 +1569,8 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             cameraReset={cameraReset}
             sceneAttempt={sceneAttempt}
             reducedMotion={reducedMotion}
+            taskCueBodies={taskCueBodies}
+            taskCuesEnabled={taskCuesEnabled}
             onSceneReady={handleSceneReady}
             onSceneError={handleSceneError}
           />
@@ -1568,7 +1606,6 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             </Button>
           </div>
         ) : null}
-        <GripperTrajectoryLegend series={series} frame={frame} reducedMotion={reducedMotion} />
       </div>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-t border-base-300 px-2 py-1 text-xs text-base-content/55">
         <fieldset className="join">
@@ -1604,7 +1641,64 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <RotateCcw size={13} /> Oblique
           </Button>
         </fieldset>
-        <span className="ml-auto">Drag to orbit · wheel to zoom</span>
+        {view === "scene" && hasTwin ? (
+          taskCueResolution?.status === "resolved" ? (
+            <>
+              <Button
+                size="xs"
+                variant={taskCuesEnabled ? "primary" : "secondary"}
+                aria-pressed={taskCuesEnabled}
+                title={
+                  taskCueResolution.unrenderedRegions.length
+                    ? `${taskCueResolution.unrenderedRegions.length} abstract table region${taskCueResolution.unrenderedRegions.length === 1 ? " is" : "s are"} intentionally not rendered`
+                    : "Highlight every renderable body referenced by the BDDL goals"
+                }
+                onClick={() => setTaskCuesEnabled((value) => !value)}
+              >
+                Task cues · {taskCueResolution.goals.length} goal
+                {taskCueResolution.goals.length === 1 ? "" : "s"} ·{" "}
+                {taskCueResolution.bodies.length}
+                {" bodies"}
+              </Button>
+              {taskCuesEnabled ? (
+                <span
+                  className="hidden items-center gap-2 text-[12px] text-base-content/60 2xl:flex"
+                  data-testid="task-cue-legend"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full bg-[#ffb15c] shadow-[0_0_7px_2px_rgba(255,177,92,0.5)]"
+                    />
+                    Pulsing: manipulated
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span aria-hidden className="size-2 border border-[#62dce9]" />
+                    Outline: destination
+                  </span>
+                </span>
+              ) : null}
+            </>
+          ) : taskDetailQuery.isError || taskCueResolution?.status === "unavailable" ? (
+            <span
+              className="text-[12px] text-warning"
+              title={
+                taskCueResolution?.status === "unavailable"
+                  ? taskCueResolution.reason
+                  : taskDetailQuery.error instanceof Error
+                    ? taskDetailQuery.error.message
+                    : "Task definition could not be loaded"
+              }
+            >
+              Task cues unavailable
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[12px] text-base-content/55">
+              <span aria-hidden className="loading loading-spinner loading-xs" />
+              Loading task cues…
+            </span>
+          )
+        ) : null}
       </div>
     </section>
   );
@@ -1651,9 +1745,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         </span>
         {manifest.action_horizon ? (
           <Badge tone="cyan">horizon {manifest.action_horizon}</Badge>
-        ) : (
-          <Badge>horizon n/a</Badge>
-        )}
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 px-2 py-1" data-testid="replay-action-plot">
         <div className="relative h-full min-h-0">
@@ -1826,6 +1918,18 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           </span>
         </div>
       </div>
+      {isReplayTransition ? (
+        <span
+          role="status"
+          aria-live="polite"
+          data-testid="replay-transition-loading"
+          className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-base-content/55"
+        >
+          <span aria-hidden className="loading loading-spinner loading-xs text-primary/65" />
+          <span className="hidden 2xl:inline">Loading record…</span>
+          <span className="sr-only 2xl:hidden">Loading record</span>
+        </span>
+      ) : null}
       {previousReplayId ? (
         <IconButton size="sm" variant="ghost" asChild aria-label="Previous record">
           <Link
@@ -1890,7 +1994,9 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     <div
       ref={replayRootRef}
       data-testid="replay-workbench"
+      data-displayed-replay-id={displayedReplayId}
       data-fullscreen={fullscreen ? "true" : "false"}
+      aria-busy={isReplayTransition}
       className={cn(
         "viewport-page flex min-h-0 flex-col gap-2",
         fullscreen && "h-screen max-h-screen bg-base-200 p-2",
@@ -1909,7 +2015,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <>
               <Panel id="browser" defaultSize="18%" minSize={260} maxSize={390}>
                 <ReplayNavigator
-                  replayId={replayId}
+                  replayId={displayedReplayId}
                   manifest={manifest}
                   context={contextQuery.data}
                   isLoading={contextQuery.isLoading}
@@ -1959,7 +2065,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
           <ReplayNavigator
-            replayId={replayId}
+            replayId={displayedReplayId}
             manifest={manifest}
             context={contextQuery.data}
             isLoading={contextQuery.isLoading}

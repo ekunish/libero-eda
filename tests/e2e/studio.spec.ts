@@ -164,13 +164,35 @@ test("Sources states exact training and evaluation provenance", async ({ page })
 });
 
 test("Replay loads hosted series, media, and the task navigator", async ({ page }) => {
+  let delayNextSeries = false;
+  await page.route("**/original-libero-libero_spatial-001-01.arrow.gz", async (route) => {
+    if (delayNextSeries) await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
   await page.goto("/replay/?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
   await expect(
     page.getByTestId("replay-command-bar").getByText("Original LIBERO demo"),
   ).toBeVisible();
   await expect(page.getByText("Synchronized cameras")).toBeVisible();
   await expect(page.getByTestId("video-panel")).toBeVisible();
-  await expect(page.getByRole("link", { name: /Next record/i })).toBeVisible();
+  const nextRecord = page.getByRole("link", { name: /Next record/i });
+  await expect(nextRecord).toBeVisible();
+
+  delayNextSeries = true;
+  await nextRecord.click();
+  await expect(page).toHaveURL(/replay_id=original-libero-libero_spatial-001-01/);
+  await expect(page.getByTestId("replay-transition-loading")).toBeVisible();
+  await expect(page.getByTestId("replay-workbench-skeleton")).toHaveCount(0);
+  await expect(page.getByTestId("replay-workbench")).toHaveAttribute(
+    "data-displayed-replay-id",
+    "original-libero-libero_spatial-001-00",
+  );
+  await expect(page.getByTestId("replay-workbench")).toHaveAttribute(
+    "data-displayed-replay-id",
+    "original-libero-libero_spatial-001-01",
+    { timeout: 15_000 },
+  );
+  await expect(page.getByTestId("replay-transition-loading")).toHaveCount(0);
 });
 
 test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", async ({ page }) => {
@@ -178,6 +200,7 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
   await expect(
     page.getByTestId("replay-command-bar").getByText("LIBERO-Plus training record"),
   ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Task cues/ })).toHaveCount(0);
 
   const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
   await expect
@@ -226,22 +249,28 @@ test("Replay exposes camera controls and current EEF orientation without result 
   await page.goto("/replay/?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
   await expect(page.getByRole("button", { name: "Front sync" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Oblique" })).toBeVisible();
+  const taskCues = page.getByRole("button", {
+    name: /Task cues · \d+ goals? · \d+ bodies/,
+  });
+  await expect(taskCues).toBeVisible();
+  await expect(taskCues).toHaveAttribute("aria-pressed", "true");
+  await taskCues.click();
+  await expect(taskCues).toHaveAttribute("aria-pressed", "false");
+  await taskCues.click();
+  await expect(taskCues).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("current-rotation-vector")).toContainText("[");
   await expect(page.getByText("Scene & camera")).toHaveCount(0);
   await expect(page.getByText("x / y / z [m]", { exact: true })).toHaveCount(0);
   await expect(
     page.getByTestId("replay-command-bar").getByText("Success", { exact: true }),
   ).toHaveCount(0);
-  const legend = page.getByRole("figure", {
-    name: "Trajectory hue by gripper command and opacity by passage",
-  });
-  await expect(legend).toContainText("Open command");
-  await expect(legend).toContainText("Close command");
-  await expect(legend).toContainText("Passed");
-  await expect(legend).toContainText("Current");
-  await expect(legend).toContainText("Ahead");
-  await expect(legend).toContainText("Current position · follows trajectory hue");
-  await expect(legend).toContainText("Rainbow flows continuously");
+  await expect(
+    page.getByRole("figure", {
+      name: "Trajectory hue by gripper command and opacity by passage",
+    }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Drag to orbit · wheel to zoom")).toHaveCount(0);
+  await expect(page.getByText("horizon n/a")).toHaveCount(0);
   const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
   await expect(front).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
 
@@ -254,10 +283,6 @@ test("Reduced motion freezes rainbow flow without removing trajectory semantics"
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/replay/?replay_id=demo-99&replay_scope=task");
-  const legend = page.getByRole("figure", {
-    name: "Trajectory hue by gripper command and opacity by passage",
-  });
-  await expect(legend).toContainText("Rainbow frozen by reduced-motion");
   await expect(
     page.getByRole("img", { name: /Rainbow motion is frozen by the reduced-motion preference/ }),
   ).toBeVisible();

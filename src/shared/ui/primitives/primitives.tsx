@@ -128,7 +128,7 @@ export function Badge({
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div aria-hidden className={cn("skeleton", className)} />;
+  return <div aria-hidden className={cn("eda-skeleton", className)} />;
 }
 
 export function EmptyState({

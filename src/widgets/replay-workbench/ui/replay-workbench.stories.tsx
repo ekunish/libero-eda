@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { delay, HttpResponse, http } from "msw";
+import { useState } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import type {
   EvaluationCondition,
@@ -7,6 +8,7 @@ import type {
   ReplayContextItem,
   ReplayManifest,
   ReplaySeries,
+  TaskDetail,
 } from "@/shared/api";
 import { ReplayWorkbench } from "./replay-workbench";
 
@@ -85,7 +87,7 @@ function analysisSceneGlb(): Uint8Array {
         },
       },
       scene: 0,
-      scenes: [{ nodes: [0, 1, 2, 3] }],
+      scenes: [{ nodes: [0, 1, 2, 3, 4] }],
       nodes: [
         {
           name: "robot0_link0",
@@ -115,6 +117,12 @@ function analysisSceneGlb(): Uint8Array {
             mujocoGeomType: 6,
             mujocoGeomSize: [0.5, 0.5, 0.5],
           },
+        },
+        {
+          name: "plate_1_main",
+          mesh: 2,
+          scale: [0.3, 0.3, 0.04],
+          extras: { mujocoBodyIndex: 4, mujocoBodyName: "plate_1_main" },
         },
       ],
       meshes: [0, 1, 2, 3].map((material) => ({
@@ -252,27 +260,31 @@ const series: ReplaySeries = {
       [0.08, 0, 0.92],
       [0.52, 0.16, 0.79],
       [0.3, 0.08, 0.68],
+      [0.6, 0.18, 0.78],
     ],
     [
       [-0.08, 0, 0.36],
       [0.1, 0.01, 0.93],
       [0.52, 0.16, 0.79],
       [0.3, 0.08, 0.68],
+      [0.6, 0.18, 0.78],
     ],
     [
       [-0.08, 0, 0.36],
       [0.13, 0.02, 0.92],
       [0.5, 0.15, 0.79],
       [0.3, 0.08, 0.68],
+      [0.6, 0.18, 0.78],
     ],
     [
       [-0.08, 0, 0.36],
       [0.16, 0.03, 0.9],
       [0.48, 0.13, 0.8],
       [0.3, 0.08, 0.68],
+      [0.6, 0.18, 0.78],
     ],
   ],
-  body_quaternions: Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => [1, 0, 0, 0])),
+  body_quaternions: Array.from({ length: 4 }, () => Array.from({ length: 5 }, () => [1, 0, 0, 0])),
   object_displacements: {},
   chunk_boundaries: [],
   speed: [0, 0.63, 0.65, 0.5],
@@ -324,7 +336,7 @@ const originalManifest: ReplayManifest = {
   scene_schema: "parc-mujoco-scene/v3",
   scene_fidelity: "recording_render_matched",
   scene_fidelity_reason: "Storybook scene with recorded textures",
-  body_names: ["robot0_link0", "robot0_link1", "black_bowl", "table"],
+  body_names: ["robot0_link0", "robot0_link1", "black_bowl", "table", "plate_1_main"],
   scene_cameras: [
     {
       camera: "agentview",
@@ -340,6 +352,38 @@ const originalManifest: ReplayManifest = {
   ],
   outcome: { success: true },
   provenance: { numeric_state_is_lossless: true },
+};
+
+const taskDetail: TaskDetail = {
+  task_key: originalManifest.task_key as string,
+  source: "libero",
+  suite: "libero_spatial",
+  suite_id: 5,
+  name: "pick_up_the_black_bowl_and_place_it_on_the_plate",
+  instruction: originalManifest.task_name,
+  base_task_key: null,
+  plus_task_key: null,
+  category: "Unmodified",
+  difficulty: null,
+  scene: null,
+  is_t1: false,
+  t1_ordinal: null,
+  t1_instruction: null,
+  entry_kind: "original",
+  bddl: `(define (problem storybook)
+    (:domain robosuite)
+    (:regions)
+    (:fixtures main_table - table)
+    (:objects black_bowl - bowl plate_1 - plate)
+    (:obj_of_interest black_bowl plate_1)
+    (:init)
+    (:goal (And (On black_bowl plate_1)))
+  )`,
+  bddl_diff: "",
+  definition_relation: "original",
+  lineage_root_key: originalManifest.task_key as string,
+  related_total: 1,
+  related: [],
 };
 
 const plusManifest: ReplayManifest = {
@@ -373,6 +417,14 @@ const delayedSceneManifest: ReplayManifest = {
   replay_id: "delayed-scene-demo",
   scene_asset_id: "delayed-analysis-scene",
   scene_hash: "storybook-delayed-scene",
+};
+
+const nextOriginalManifest: ReplayManifest = {
+  ...originalManifest,
+  replay_id: "original-libero-libero_spatial-005-01",
+  source_episode_id: "libero_spatial:5:1",
+  episode_id: 1,
+  series_asset_id: "series-original-01",
 };
 
 const retrySceneManifest: ReplayManifest = {
@@ -516,7 +568,13 @@ function handlers(
   manifest: ReplayManifest,
   withBodyState: boolean,
   context = replayContext(manifest),
-  sceneOptions: { delayMs?: number; failOnce?: boolean; manifestDelayMs?: number } = {},
+  sceneOptions: {
+    delayMs?: number;
+    failOnce?: boolean;
+    manifestDelayMs?: number;
+    manifests?: Record<string, ReplayManifest>;
+    seriesDelayReplayId?: string;
+  } = {},
 ) {
   let sceneAttempts = 0;
   const sceneAssetId = manifest.scene_asset_id ?? "analysis-scene";
@@ -529,18 +587,23 @@ function handlers(
         offset: 0,
       }),
     ),
-    http.get("/api/v1/replays/:replayId/context", () => HttpResponse.json(context)),
-    http.get("/api/v1/replays/:replayId", async () => {
-      if (sceneOptions.manifestDelayMs) await delay(sceneOptions.manifestDelayMs);
-      return HttpResponse.json(manifest);
+    http.get("/api/v1/replays/:replayId/context", ({ params }) => {
+      const selectedManifest = sceneOptions.manifests?.[String(params.replayId)];
+      return HttpResponse.json(selectedManifest ? replayContext(selectedManifest) : context);
     }),
-    http.get("/api/v1/replays/:replayId/series", () =>
-      HttpResponse.json({
+    http.get("/api/v1/tasks/:taskKey", () => HttpResponse.json(taskDetail)),
+    http.get("/api/v1/replays/:replayId", async ({ params }) => {
+      if (sceneOptions.manifestDelayMs) await delay(sceneOptions.manifestDelayMs);
+      return HttpResponse.json(sceneOptions.manifests?.[String(params.replayId)] ?? manifest);
+    }),
+    http.get("/api/v1/replays/:replayId/series", async ({ params }) => {
+      if (sceneOptions.seriesDelayReplayId === String(params.replayId)) await delay(800);
+      return HttpResponse.json({
         ...series,
         body_positions: withBodyState ? series.body_positions : [],
         body_quaternions: withBodyState ? series.body_quaternions : [],
-      }),
-    ),
+      });
+    }),
     http.get("/api/v1/datasets/lerobot_libero_plus/training-environment-categories", () =>
       HttpResponse.json({
         dataset_id: "lerobot_libero_plus",
@@ -576,6 +639,22 @@ function handlers(
   ];
 }
 
+function ReplayTransitionHarness() {
+  const [activeReplayId, setActiveReplayId] = useState(originalManifest.replay_id);
+  return (
+    <>
+      <button
+        type="button"
+        className="sr-only"
+        onClick={() => setActiveReplayId(nextOriginalManifest.replay_id)}
+      >
+        Load next fixture record
+      </button>
+      <ReplayWorkbench replayId={activeReplayId} />
+    </>
+  );
+}
+
 const meta = {
   title: "Widgets/Replay Workbench",
   component: ReplayWorkbench,
@@ -599,21 +678,11 @@ export const OriginalLiberoDigitalTwin: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByText("MuJoCo-matched 3D")).toBeVisible();
-    const legend = canvas.getByRole("figure", {
-      name: "Trajectory hue by gripper command and opacity by passage",
-    });
-    await expect(within(legend).getByText("Open command")).toBeVisible();
-    await expect(within(legend).getByText("Close command")).toBeVisible();
-    await expect(within(legend).getByText("Passed")).toBeVisible();
-    await expect(within(legend).getByText("Current")).toBeVisible();
-    await expect(within(legend).getByText("Ahead")).toBeVisible();
-    await expect(within(legend).getByText("Rainbow flows continuously")).toBeVisible();
     await expect(
-      within(legend).getByText("Current position · follows trajectory hue"),
-    ).toBeVisible();
-    await expect(
-      within(legend).getByText("axes (R=X, G=Y, B=Z) · current EEF orientation"),
-    ).toBeVisible();
+      canvas.queryByRole("figure", {
+        name: "Trajectory hue by gripper command and opacity by passage",
+      }),
+    ).toBeNull();
     await expect(canvas.getByTestId("current-rotation-vector")).toHaveTextContent(
       "[0.0000, 0.0000, 0.0000]",
     );
@@ -623,7 +692,18 @@ export const OriginalLiberoDigitalTwin: Story = {
       within(canvas.getByTestId("replay-command-bar")).queryByText("Success"),
     ).toBeNull();
     await expect(canvas.queryByRole("button", { name: "Wide FOV" })).toBeNull();
+    await expect(canvas.queryByText("Drag to orbit · wheel to zoom")).toBeNull();
+    await expect(canvas.queryByText("horizon n/a")).toBeNull();
     await expect(canvas.queryByTestId("replay-layout-toggle")).toBeNull();
+    const taskCues = await canvas.findByRole("button", {
+      name: "Task cues · 1 goal · 2 bodies",
+    });
+    await expect(taskCues).toHaveAttribute("aria-pressed", "true");
+    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Pulsing: manipulated");
+    await expect(canvas.getByTestId("task-cue-legend")).toHaveTextContent("Outline: destination");
+    await userEvent.click(taskCues);
+    await expect(taskCues).toHaveAttribute("aria-pressed", "false");
+    await expect(canvas.queryByTestId("task-cue-legend")).toBeNull();
     const video = canvas.getByTestId("video-panel").getBoundingClientRect();
     const spatial = canvas.getByTestId("spatial-panel").getBoundingClientRect();
     const stage = canvas.getByTestId("replay-stage").getBoundingClientRect();
@@ -653,6 +733,48 @@ export const LoadingWorkspace: Story = {
     await waitFor(() => expect(canvas.queryByTestId("replay-workbench-skeleton")).toBeNull(), {
       timeout: 3_000,
     });
+  },
+};
+
+export const RecordTransitionKeepsWorkspace: Story = {
+  args: { replayId: originalManifest.replay_id },
+  render: () => <ReplayTransitionHarness />,
+  parameters: {
+    msw: {
+      handlers: handlers(originalManifest, true, replayContext(originalManifest), {
+        manifests: {
+          [originalManifest.replay_id]: originalManifest,
+          [nextOriginalManifest.replay_id]: nextOriginalManifest,
+        },
+        seriesDelayReplayId: nextOriginalManifest.replay_id,
+      }),
+    },
+  },
+  globals: { viewport: { value: "desktop2k", isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const workspace = await canvas.findByTestId("replay-workbench");
+    await expect(workspace).toHaveAttribute("data-displayed-replay-id", originalManifest.replay_id);
+    await expect(await canvas.findByRole("navigation", { name: "Filtered records" })).toBeVisible();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Load next fixture record" }));
+
+    await expect(await canvas.findByTestId("replay-transition-loading")).toHaveTextContent(
+      "Loading record",
+    );
+    await expect(workspace).toHaveAttribute("data-displayed-replay-id", originalManifest.replay_id);
+    await expect(canvas.queryByTestId("replay-workbench-skeleton")).toBeNull();
+    await expect(canvasElement.querySelectorAll(".eda-skeleton")).toHaveLength(0);
+
+    await waitFor(
+      () =>
+        expect(workspace).toHaveAttribute(
+          "data-displayed-replay-id",
+          nextOriginalManifest.replay_id,
+        ),
+      { timeout: 3_000 },
+    );
+    await expect(canvas.queryByTestId("replay-transition-loading")).toBeNull();
   },
 };
 
@@ -846,9 +968,9 @@ export const TabletRecordingDrawer: Story = {
     await expect(triggerBox.height).toBeLessThanOrEqual(40);
     await expect(detailBox.top - triggerBox.bottom).toBeLessThan(24);
     await userEvent.click(trigger);
-    const dialog = within(document.body).getByRole("dialog", { name: "Filtered records" });
+    const dialog = await within(document.body).findByRole("dialog", { name: "Filtered records" });
     await expect(dialog).toBeVisible();
-    await expect(within(dialog).getByLabelText("Record list scope")).toHaveValue("task");
+    await expect(await within(dialog).findByLabelText("Record list scope")).toHaveValue("task");
     await expect(
       within(dialog).getByRole("navigation", { name: "Filtered records" }),
     ).toBeVisible();

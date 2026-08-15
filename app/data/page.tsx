@@ -11,7 +11,7 @@ export const metadata = createPageMetadata({
 
 export default function DataPage() {
   return (
-    <Suspense fallback={<div className="skeleton h-[70vh] w-full" />}>
+    <Suspense fallback={<div className="eda-skeleton h-[70vh] w-full" />}>
       <DataExplorerPage />
     </Suspense>
   );
