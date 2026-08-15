@@ -119,6 +119,16 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
   expect(mediaBox).not.toBeNull();
   expect(toolbarBox?.x ?? 1).toBeLessThan(mediaBox?.x ?? 0);
 
+  const playhead = page.getByLabel("Replay playhead");
+  const frameBefore = await playhead.inputValue();
+  const spatial = page.getByTestId("spatial-viewport");
+  await page.waitForTimeout(500);
+  const rainbowBefore = await spatial.screenshot();
+  await page.waitForTimeout(650);
+  const rainbowAfter = await spatial.screenshot();
+  expect(rainbowBefore.equals(rainbowAfter)).toBe(false);
+  expect(await playhead.inputValue()).toBe(frameBefore);
+
   await page.getByRole("button", { name: "Play" }).click();
   await expect
     .poll(() => front.evaluate((video: HTMLVideoElement) => video.currentTime))
@@ -141,8 +151,41 @@ test("Replay exposes camera controls and current EEF orientation without result 
   await expect(
     page.getByTestId("replay-command-bar").getByText("Success", { exact: true }),
   ).toHaveCount(0);
+  const legend = page.getByRole("figure", {
+    name: "Trajectory hue by gripper command and opacity by passage",
+  });
+  await expect(legend).toContainText("Open command");
+  await expect(legend).toContainText("Close command");
+  await expect(legend).toContainText("Passed");
+  await expect(legend).toContainText("Current");
+  await expect(legend).toContainText("Ahead");
+  await expect(legend).toContainText("Rainbow flows continuously");
   const front = page.locator('video[aria-label="Front / agentview synchronized video"]');
   await expect(front).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+  await expect(page.getByTestId("scene-model-loading")).toHaveCount(0, { timeout: 30_000 });
+});
+
+test("Reduced motion freezes rainbow flow without removing trajectory semantics", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/replay/?replay_id=demo-99&replay_scope=task");
+  const legend = page.getByRole("figure", {
+    name: "Trajectory hue by gripper command and opacity by passage",
+  });
+  await expect(legend).toContainText("Rainbow frozen by reduced-motion");
+  await expect(
+    page.getByRole("img", { name: /Rainbow motion is frozen by the reduced-motion preference/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+  const spatial = page.getByTestId("spatial-viewport");
+  await page.waitForTimeout(500);
+  const first = await spatial.screenshot();
+  await page.waitForTimeout(500);
+  const second = await spatial.screenshot();
+  expect(first.equals(second)).toBe(true);
 });
 
 test("Recorded Data opens a replay and keeps its ID across reload", async ({ page }) => {

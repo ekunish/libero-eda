@@ -599,9 +599,15 @@ export const OriginalLiberoDigitalTwin: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(await canvas.findByText("MuJoCo-matched 3D")).toBeVisible();
-    const legend = canvas.getByRole("figure", { name: "Trajectory color by gripper command" });
+    const legend = canvas.getByRole("figure", {
+      name: "Trajectory hue by gripper command and opacity by passage",
+    });
     await expect(within(legend).getByText("Open command")).toBeVisible();
     await expect(within(legend).getByText("Close command")).toBeVisible();
+    await expect(within(legend).getByText("Passed")).toBeVisible();
+    await expect(within(legend).getByText("Current")).toBeVisible();
+    await expect(within(legend).getByText("Ahead")).toBeVisible();
+    await expect(within(legend).getByText("Rainbow flows continuously")).toBeVisible();
     await expect(within(legend).getByText("Current position")).toBeVisible();
     await expect(
       within(legend).getByText("axes (R=X, G=Y, B=Z) · current EEF orientation"),

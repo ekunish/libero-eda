@@ -1,6 +1,6 @@
 "use client";
 
-import { Line, OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei";
+import { OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import type { EChartsOption, SeriesOption } from "echarts";
@@ -81,7 +81,13 @@ import {
   sanitizeReplayParams,
 } from "../model/replay-context-url";
 import { shouldHideSceneNode } from "../model/scene-visibility";
+import {
+  buildStaticTrajectorySegments,
+  TRAJECTORY_FLOW,
+  type TrajectoryTemporalRegion,
+} from "../model/trajectory-appearance";
 import { usePlayback } from "../model/use-playback";
+import { useReducedMotion } from "../model/use-reduced-motion";
 import {
   cssVideoTransform,
   resetVideoTransform,
@@ -90,6 +96,7 @@ import {
   type VideoTransform,
 } from "../model/video-orientation";
 import { clampVideoTime, videoTimeForSeriesFrame } from "../model/video-time";
+import { AnimatedRainbowTrajectory } from "./animated-trajectory";
 import { ReplayNavigator } from "./replay-navigator";
 
 function PlaybackTicker() {
@@ -644,6 +651,7 @@ function TrajectoryScene({
   cameraMode,
   cameraReset,
   sceneAttempt,
+  reducedMotion,
   onSceneReady,
   onSceneError,
 }: {
@@ -654,6 +662,7 @@ function TrajectoryScene({
   cameraMode: "front" | "oblique";
   cameraReset: number;
   sceneAttempt: number;
+  reducedMotion: boolean;
   onSceneReady: () => void;
   onSceneError: (error: Error) => void;
 }) {
@@ -663,10 +672,6 @@ function TrajectoryScene({
         (point) => new THREE.Vector3(point[0] ?? 0, point[1] ?? 0, point[2] ?? 0),
       ),
     [series.ee_positions],
-  );
-  const trajectorySegments = useMemo(
-    () => buildGripperTrajectorySegments(series.ee_positions, series.actions),
-    [series.actions, series.ee_positions],
   );
   const current = points[Math.min(frame, points.length - 1)] ?? new THREE.Vector3();
   const axisAngle = series.ee_axis_angle ?? [];
@@ -694,13 +699,16 @@ function TrajectoryScene({
     };
   }, [agentviewCalibration, cameraMode, center]);
   const cameraKey = `${cameraMode}-${cameraReset}`;
+  const motionDescription = reducedMotion
+    ? "Rainbow motion is frozen by the reduced-motion preference."
+    : "The rainbow flows continuously, including while Replay is paused.";
   return (
     <Canvas
       role="img"
       aria-label={
         showTwin
-          ? `3D view of the robot, objects, and EEF trajectory. Trajectory color encodes the gripper command. Current frame ${frame}.`
-          : `3D view of the EEF trajectory. Trajectory color encodes the gripper command. Current frame ${frame}.`
+          ? `3D view of the robot, objects, and EEF trajectory. Hue encodes the gripper command and opacity distinguishes passed, current, and upcoming points. ${motionDescription} Current frame ${frame}.`
+          : `3D view of the EEF trajectory. Hue encodes the gripper command and opacity distinguishes passed, current, and upcoming points. ${motionDescription} Current frame ${frame}.`
       }
       gl={{ antialias: true, alpha: true, toneMapping: THREE.NoToneMapping }}
       dpr={[1, 2]}
@@ -736,19 +744,12 @@ function TrajectoryScene({
           </Suspense>
         </SceneModelErrorBoundary>
       ) : null}
-      {trajectorySegments.map((segment) => {
-        const style = GRIPPER_TRAJECTORY_STYLES[segment.state];
-        return (
-          <Line
-            key={`${segment.state}-${segment.startIndex}`}
-            points={segment.points}
-            color={style.color}
-            lineWidth={style.lineWidth}
-            transparent
-            opacity={0.95}
-          />
-        );
-      })}
+      <AnimatedRainbowTrajectory
+        positions={series.ee_positions}
+        actions={series.actions}
+        frame={frame}
+        reducedMotion={reducedMotion}
+      />
       <mesh position={current}>
         <sphereGeometry args={[0.008, 18, 18]} />
         <meshBasicMaterial color="#b85b45" />
@@ -769,7 +770,15 @@ function TrajectoryScene({
   );
 }
 
-function GripperTrajectoryLegend({ series, frame }: { series: ReplaySeries; frame: number }) {
+function GripperTrajectoryLegend({
+  series,
+  frame,
+  reducedMotion,
+}: {
+  series: ReplaySeries;
+  frame: number;
+  reducedMotion: boolean;
+}) {
   const trajectorySegments = useMemo(
     () => buildGripperTrajectorySegments(series.ee_positions, series.actions),
     [series.actions, series.ee_positions],
@@ -778,7 +787,7 @@ function GripperTrajectoryLegend({ series, frame }: { series: ReplaySeries; fram
   if (trajectorySegments.some((segment) => segment.state === "unknown")) states.push("unknown");
   return (
     <figure
-      aria-label="Trajectory color by gripper command"
+      aria-label="Trajectory hue by gripper command and opacity by passage"
       className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap items-center gap-x-3 gap-y-1 bg-base-100/90 px-2 py-1 text-xs text-[var(--muted)] shadow-sm"
     >
       {states.map((state) => {
@@ -787,15 +796,30 @@ function GripperTrajectoryLegend({ series, frame }: { series: ReplaySeries; fram
           <span key={state} className="flex items-center gap-1.5">
             <span
               aria-hidden
-              className="w-4 border-t-2"
-              style={{ borderColor: style.color, borderTopStyle: style.lineType }}
+              className="h-1 w-5 rounded-full"
+              style={{ backgroundImage: `linear-gradient(90deg, ${style.gradient.join(", ")})` }}
             />
             {style.label}
           </span>
         );
       })}
+      {(
+        [
+          ["Passed", TRAJECTORY_FLOW.pastOpacity],
+          ["Current", 1],
+          ["Ahead", TRAJECTORY_FLOW.futureOpacity],
+        ] as const
+      ).map(([label, opacity]) => (
+        <span key={label} className="flex items-center gap-1.5">
+          <span aria-hidden className="h-1 w-4 rounded-full bg-base-content" style={{ opacity }} />
+          {label}
+        </span>
+      ))}
       <span className="flex items-center gap-1.5">
         <span aria-hidden className="size-2 rounded-full bg-[#b85b45]" /> Current position
+      </span>
+      <span>
+        {reducedMotion ? "Rainbow frozen by reduced-motion" : "Rainbow flows continuously"}
       </span>
       {rotationVectorQuaternion(series.ee_axis_angle?.[frame]) ? (
         <span className="flex items-center gap-1.5">
@@ -818,30 +842,49 @@ function GripperTrajectoryLegend({ series, frame }: { series: ReplaySeries; fram
 function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: number }) {
   const text = chartTextColor();
   const points = series.ee_positions;
-  const trajectorySegments = buildGripperTrajectorySegments(series.ee_positions, series.actions);
+  const trajectorySegments = buildStaticTrajectorySegments(
+    series.ee_positions,
+    series.actions,
+    frame,
+  );
   const current = points[Math.min(frame, points.length - 1)] ?? [0, 0, 0];
+  const regionOpacity: Record<TrajectoryTemporalRegion, number> = {
+    past: TRAJECTORY_FLOW.pastOpacity,
+    current: 1,
+    future: TRAJECTORY_FLOW.futureOpacity,
+  };
   const trajectorySeries: SeriesOption[] = trajectorySegments.flatMap((segment) => {
     const style = GRIPPER_TRAJECTORY_STYLES[segment.state];
     return [
       {
-        id: `xy-${segment.state}-${segment.startIndex}`,
+        id: `xy-${segment.state}-${segment.region}-${segment.startIndex}`,
         type: "line",
         xAxisIndex: 0,
         yAxisIndex: 0,
         data: segment.points.map((point) => [point[0], point[1]]),
         showSymbol: false,
         silent: true,
-        lineStyle: { color: style.color, width: style.lineWidth, type: style.lineType },
+        lineStyle: {
+          color: style.color,
+          opacity: regionOpacity[segment.region],
+          width: style.lineWidth,
+          type: style.lineType,
+        },
       },
       {
-        id: `xz-${segment.state}-${segment.startIndex}`,
+        id: `xz-${segment.state}-${segment.region}-${segment.startIndex}`,
         type: "line",
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: segment.points.map((point) => [point[0], point[2]]),
         showSymbol: false,
         silent: true,
-        lineStyle: { color: style.color, width: style.lineWidth, type: style.lineType },
+        lineStyle: {
+          color: style.color,
+          opacity: regionOpacity[segment.region],
+          width: style.lineWidth,
+          type: style.lineType,
+        },
       },
     ];
   });
@@ -907,7 +950,7 @@ function ProjectionChart({ series, frame }: { series: ReplaySeries; frame: numbe
     <Chart
       option={option}
       height={210}
-      ariaLabel={`EEF trajectory projected onto world XY and XZ. Trajectory color encodes the gripper command. Current frame ${frame}.`}
+      ariaLabel={`EEF trajectory projected onto world XY and XZ. Hue encodes the gripper command and opacity distinguishes passed, current, and upcoming points. Current frame ${frame}.`}
     />
   );
 }
@@ -1143,6 +1186,7 @@ function ReplayWorkbenchSkeleton() {
 export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const reducedMotion = useReducedMotion();
   const serializedReplayParams = searchParams.toString();
   const manifestQuery = useQuery({
     queryKey: ["replay", replayId],
@@ -1476,6 +1520,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             cameraMode={cameraMode}
             cameraReset={cameraReset}
             sceneAttempt={sceneAttempt}
+            reducedMotion={reducedMotion}
             onSceneReady={handleSceneReady}
             onSceneError={handleSceneError}
           />
@@ -1511,7 +1556,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             </Button>
           </div>
         ) : null}
-        <GripperTrajectoryLegend series={series} frame={frame} />
+        <GripperTrajectoryLegend series={series} frame={frame} reducedMotion={reducedMotion} />
       </div>
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-t border-base-300 px-2 py-1 text-xs text-base-content/55">
         <fieldset className="join">
