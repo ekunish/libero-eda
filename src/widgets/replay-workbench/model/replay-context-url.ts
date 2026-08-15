@@ -94,7 +94,7 @@ export function replayHref(replayId: string, params: URLSearchParams, anchor = f
   const query = new URLSearchParams(params);
   query.set("replay_id", replayId);
   if (anchor) query.delete(replayKeys.offset);
-  return `/replay?${query}`;
+  return `/replay/?${query}`;
 }
 
 export function safeReplayReturnPath(value: string | null): string | null {

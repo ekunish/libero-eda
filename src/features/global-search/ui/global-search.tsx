@@ -193,7 +193,7 @@ export function GlobalSearch() {
                     {originalRecordings.data.items.map((episode) => (
                       <ResultLink
                         key={episode.replay_id}
-                        href={`/replay?replay_id=${encodeURIComponent(episode.replay_id)}&replay_scope=task`}
+                        href={`/replay/?replay_id=${encodeURIComponent(episode.replay_id)}&replay_scope=task`}
                         icon={<Play size={16} />}
                         title={episode.task_instruction}
                         meta={`Demo ${episode.episode_index + 1} · ${episode.length} frames`}
@@ -209,7 +209,7 @@ export function GlobalSearch() {
                     {plusRecordings.data.items.map((episode) => (
                       <ResultLink
                         key={episode.replay_id}
-                        href={`/replay?replay_id=${encodeURIComponent(episode.replay_id)}&replay_scope=task`}
+                        href={`/replay/?replay_id=${encodeURIComponent(episode.replay_id)}&replay_scope=task`}
                         icon={<Play size={16} />}
                         title={episode.task_instruction}
                         meta={`Dataset episode #${episode.source_episode_id} · ${episode.length} frames`}

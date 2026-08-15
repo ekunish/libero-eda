@@ -84,13 +84,36 @@ test("Sources states exact training and evaluation provenance", async ({ page })
 });
 
 test("Replay loads hosted series, media, and the task navigator", async ({ page }) => {
-  await page.goto("/replay?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
+  await page.goto("/replay/?replay_id=original-libero-libero_spatial-001-00&replay_scope=task");
   await expect(
     page.getByTestId("replay-command-bar").getByText("Original LIBERO demo"),
   ).toBeVisible();
   await expect(page.getByText("Synchronized cameras")).toBeVisible();
   await expect(page.getByTestId("video-panel")).toBeVisible();
   await expect(page.getByRole("link", { name: /Next record/i })).toBeVisible();
+});
+
+test("Recorded Data opens a replay and keeps its ID across reload", async ({ page }) => {
+  await page.goto("/data/?task=libero%3Alibero_spatial%3A1");
+  const records = page.getByRole("list", { name: "Records for the selected task" });
+  await expect(records).toBeVisible();
+  const replay = records.getByRole("link", { name: /Demo 1.*Replay/ }).first();
+  await expect(replay).toHaveAttribute(
+    "href",
+    /^\/replay\/\?replay_id=original-libero-libero_spatial-001-00&/,
+  );
+
+  await replay.click();
+  await expect(page).toHaveURL(/\/replay\/\?.*replay_id=original-libero-libero_spatial-001-00/);
+  await expect(
+    page.getByTestId("replay-command-bar").getByText("Original LIBERO demo"),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/replay\/\?.*replay_id=original-libero-libero_spatial-001-00/);
+  await expect(
+    page.getByTestId("replay-command-bar").getByText("Original LIBERO demo"),
+  ).toBeVisible();
 });
 
 test("2K pages stay within the viewport", async ({ page }) => {

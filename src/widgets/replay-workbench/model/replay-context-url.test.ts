@@ -51,7 +51,7 @@ describe("Replay context URL", () => {
       replay_offset: "100",
     });
     expect(replayHref("run replay", sanitized, true)).toBe(
-      "/replay?replay_scope=run&replay_outcome=success&replay_id=run+replay",
+      "/replay/?replay_scope=run&replay_outcome=success&replay_id=run+replay",
     );
   });
 

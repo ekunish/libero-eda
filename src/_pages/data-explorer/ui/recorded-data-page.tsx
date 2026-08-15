@@ -180,7 +180,7 @@ function EpisodeList({
             return (
               <li key={episode.replay_id}>
                 <Link
-                  href={`/replay?replay_id=${encodeURIComponent(episode.replay_id)}&${replayParams}`}
+                  href={`/replay/?replay_id=${encodeURIComponent(episode.replay_id)}&${replayParams}`}
                   className="grid min-h-20 grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-3 px-4 py-2 hover:bg-base-200 lg:grid-cols-[4.75rem_minmax(0,1fr)_10rem_6rem_6rem_5rem]"
                 >
                   <EpisodeThumbnail
