@@ -1,0 +1,12 @@
+.env*
+.vercel/
+.next/
+out/
+node_modules/
+test-results/
+playwright-report/
+storybook-static/
+coverage/
+__pycache__/
+.ruff_cache/
+*.pyc
