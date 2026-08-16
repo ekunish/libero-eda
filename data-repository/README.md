@@ -25,7 +25,9 @@ This repository contains:
 - 128 x 128 WebP thumbnails;
 - derived Original LIBERO MP4 and MuJoCo GLB assets;
 - canonical Original LIBERO scene proxies and offline MuJoCo body-motion
-  reconstructions for LIBERO-Plus training replay;
+  reconstructions for LIBERO-Plus training replays;
+- finite official background/light candidate scenes and fail-closed video-match
+  decisions for LIBERO-Plus training replays;
 - content-addressed LIBERO-Plus evaluation geometry and source textures, plus
   numeric initial-state scene descriptors for all 10,030 evaluation conditions.
 
@@ -69,6 +71,32 @@ metrics, and goal status. A failed reconstruction remains explicitly
 unavailable. The Plus video and EEF trajectory are never replaced. These proxy
 scenes do not recover the training record's Plus-specific textures, lighting,
 camera settings, or hidden simulator state.
+
+Hosted v4 treats the published training video as the appearance ground truth.
+For the `env` and `light` RLDS path tags, it compares five source-video frames
+against all 50 official candidates for that source task and category. Before
+matching, every unique source front-video blob is checked against its
+content-addressed SHA-256 filename and catalog byte size. A match
+is published only when its normalized error, separation from the runner-up,
+and frame-to-frame winner consistency all pass the declared gates. The exact
+condition ID is an offline inference, not episode metadata from the public
+training artifact. A record that fails any gate remains `unmatched` and is
+rendered with neutral geometry; no nearest-candidate fallback is used. The
+candidate scene supplies its materials, lights, local geometry, and fixed
+agentview calibration. Robot and object motion continues to come from the
+separately labelled v3 proxy; camera, language, and noise path tags retain the
+canonical approximate appearance. If that proxy is unavailable but the
+appearance match passes, the official candidate's initial body poses remain
+available as a static scene. The recorded EEF trajectory continues to move;
+robot and object bodies do not, because their motion was not published and no
+replacement motion is fabricated.
+
+The 4,000-candidate appearance library is the complete generated
+background/light BDDL universe (50 per category for each of 40 source tasks).
+It is not the balanced LIBERO-Plus evaluation subset: 1,076 background and
+1,142 light conditions from that universe appear among the 10,030 evaluation
+conditions. Keeping those populations separate is required because a training
+video can match a generated condition that was not selected for evaluation.
 
 Evaluation scenes are interactive initial states, not screenshots, videos, or
 successful trajectories. Geometry is shared per Original LIBERO source task,

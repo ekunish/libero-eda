@@ -1,6 +1,6 @@
 "use client";
 
-import { OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei";
+import { OrbitControls, useGLTF } from "@react-three/drei";
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { Box, Camera, Expand, Focus, RefreshCw } from "lucide-react";
 import {
@@ -32,6 +32,7 @@ import {
 import type { TaskCueBody } from "../model/task-cues";
 import { useReducedMotion } from "../model/use-reduced-motion";
 import { addPlanarReflector, MujocoLights } from "./replay-workbench";
+import { SourcePerspectiveCamera } from "./source-perspective-camera";
 
 type CameraMode = "front" | "oblique";
 
@@ -261,17 +262,19 @@ function CameraRig({
           target: center.toArray(),
           up: [0, 0, 1] as [number, number, number],
           fov: 43,
+          imagePlaneY: "up" as const,
         };
   const key = `${record.condition.task_key}-${mode}-${reset}`;
   return (
     <>
-      <PerspectiveCamera
+      <SourcePerspectiveCamera
         key={`camera-${key}`}
         makeDefault
         position={pose.position}
         quaternion={pose.quaternion}
         up={pose.up}
         fov={pose.fov}
+        imagePlaneY={pose.imagePlaneY}
       />
       <OrbitControls
         key={`controls-${key}`}

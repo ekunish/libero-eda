@@ -275,6 +275,20 @@ export type EvaluationSceneRecord = {
   geometry_pack_asset_id: string;
   texture_base_asset_id: string;
 };
+
+export type TrainingAppearanceRecord = {
+  candidate_key: string;
+  base_task_key: string;
+  category: "env" | "light";
+  variant: string;
+  name: string;
+  runtime_bddl: string;
+  resolved_bddl: string;
+  resolved_bddl_sha256: string;
+  snapshot: EvaluationSceneSnapshot;
+  geometry_pack_asset_id: string;
+  texture_base_asset_id: string;
+};
 export type TrainingInstructionAvailability = "published" | "not_applicable";
 export type TrainingInstructionRelation =
   | "same_as_original_task"
@@ -402,12 +416,28 @@ export type SceneReconstructionMethod =
   | "unavailable";
 
 export type SceneReconstruction = {
-  schema_version: "libero-plus-training-scene-proxy/v1";
+  schema_version: "libero-plus-training-scene-proxy/v2";
   reconstruction_id: string;
   method: SceneReconstructionMethod;
   source_replay_id: string;
   source_action_sha256: string;
-  appearance: "original_libero_canonical" | "not_available";
+  appearance: "original_libero_canonical" | "video_matched_official_candidate" | "not_available";
+  appearance_match: {
+    schema_version: "libero-plus-training-appearance-match/v1";
+    status: "matched" | "unmatched" | "not_applicable";
+    category: string | null;
+    candidate_key: string | null;
+    candidate_name: string | null;
+    candidate_variant: string | null;
+    candidate_bddl: string | null;
+    candidate_bddl_sha256: string | null;
+    best_score: number | null;
+    runner_up_score: number | null;
+    relative_margin: number | null;
+    frame_wins: number | null;
+    frame_count: number;
+    reason: string;
+  };
   object_motion:
     | "original_successful_demo_proxy"
     | "mujoco_simulated"

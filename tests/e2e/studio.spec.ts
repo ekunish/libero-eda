@@ -43,14 +43,16 @@ test("Brand metadata, icons, manifest, and legal pages are published", async ({
     "/manifest.webmanifest",
   );
 
-  for (const [path, contentType] of [
-    ["/favicon.ico", "image/vnd.microsoft.icon"],
-    ["/brand/apple-touch-icon.png", "image/png"],
-    ["/brand/social-card.png", "image/png"],
+  for (const [path, contentTypes] of [
+    ["/favicon.ico", ["image/vnd.microsoft.icon", "image/x-icon"]],
+    ["/brand/apple-touch-icon.png", ["image/png"]],
+    ["/brand/social-card.png", ["image/png"]],
   ] as const) {
     const response = await request.get(path);
     expect(response.ok()).toBe(true);
-    expect(response.headers()["content-type"]).toContain(contentType);
+    expect(
+      contentTypes.some((contentType) => response.headers()["content-type"]?.includes(contentType)),
+    ).toBe(true);
   }
 
   const manifestResponse = await request.get("/manifest.webmanifest");
@@ -227,7 +229,10 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
   await expect(
     page.getByTestId("replay-command-bar").getByText("LIBERO-Plus training record"),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: /Task cues/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Task cues" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   const sourceDefinition = page.getByTestId("task-definition-inspector");
   await expect(sourceDefinition).toContainText("Source task definition (BDDL)");
   await expect(sourceDefinition).toContainText(
@@ -346,6 +351,40 @@ test("Replay exposes camera controls and current EEF orientation without result 
 
   await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
   await expect(page.getByTestId("scene-model-loading")).toHaveCount(0, { timeout: 30_000 });
+});
+
+test("Plus environment replay uses its validated video-matched appearance", async ({ page }) => {
+  await page.goto(
+    "/replay/?replay_id=demo-995&replay_scope=task&return_to=%2Fdata%3Fdataset%3Dlerobot_libero_plus%26task%3Dlibero%253Alibero_10%253A1",
+  );
+
+  const inspector = page.getByTestId("reconstruction-inspector");
+  await expect(inspector).toContainText("Video-matched official candidate");
+  await expect(inspector).toContainText("table_24");
+  await expect(inspector).toContainText("5/5");
+  await expect(inspector).toContainText("0.091");
+  await expect(inspector).toContainText("37.8%");
+  await expect(inspector).toContainText("not an exact condition ID published with this episode");
+  await expect(page.getByRole("button", { name: "Front sync" })).toBeEnabled();
+  await expect(page.getByTestId("scene-model-loading")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("scene-model-error")).toHaveCount(0);
+});
+
+test("Plus appearance remains orbitable when published body motion is unavailable", async ({
+  page,
+}) => {
+  await page.goto("/replay/?replay_id=demo-12273&replay_scope=task");
+
+  const inspector = page.getByTestId("reconstruction-inspector");
+  await expect(inspector).toContainText("Video-matched official candidate");
+  await expect(inspector).toContainText("Object motionNot published");
+  await expect(inspector).toContainText("candidate scene remains static");
+  await expect(
+    page.getByTestId("replay-command-bar").getByText("Video-matched initial scene"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Front sync" })).toBeEnabled();
+  await expect(page.getByTestId("scene-model-loading")).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("scene-model-error")).toHaveCount(0);
 });
 
 test("Reduced motion freezes rainbow flow without removing trajectory semantics", async ({

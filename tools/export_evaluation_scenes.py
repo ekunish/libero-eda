@@ -169,7 +169,11 @@ def ensure_owned_output(path: Path, *, probe: bool) -> Path:
     result = path.resolve()
     marker = result / ".libero-evaluation-scenes.json"
     if result.exists():
-        if marker.is_symlink() or not marker.is_file() or json.loads(marker.read_text()) != OWNER:
+        if (
+            marker.is_symlink()
+            or not marker.is_file()
+            or json.loads(marker.read_text()) != OWNER
+        ):
             raise RuntimeError(f"Output is not owned by this exporter: {result}")
     else:
         result.mkdir(parents=True)
@@ -218,9 +222,13 @@ def validate_source(source_repo: Path, hosted_root: Path) -> dict[str, Any]:
         source_repo / ".parc/downloads/.cache/huggingface/download/assets.zip.metadata"
     )
     if assets_root.is_symlink() or not assets_root.is_dir():
-        raise RuntimeError("LIBERO-Plus simulator asset root is missing or is a symlink")
+        raise RuntimeError(
+            "LIBERO-Plus simulator asset root is missing or is a symlink"
+        )
     if asset_metadata.is_symlink() or not asset_metadata.is_file():
-        raise RuntimeError("LIBERO-Plus simulator asset download metadata is missing or is a symlink")
+        raise RuntimeError(
+            "LIBERO-Plus simulator asset download metadata is missing or is a symlink"
+        )
     metadata_lines = asset_metadata.read_text(encoding="utf-8").splitlines()
     if metadata_lines[:2] != [
         LIBERO_PLUS_ASSETS_REVISION,
@@ -249,7 +257,13 @@ def validate_source(source_repo: Path, hosted_root: Path) -> dict[str, Any]:
         source_files[relative] = {"variant": matched, "sha256": digest}
     hosted_manifest = json.loads((hosted_root / "manifest.json").read_text())
     if (
-        hosted_manifest.get("schema_version") != "libero-eda-hosted/v1"
+        hosted_manifest.get("schema_version")
+        not in {
+            "libero-eda-hosted/v1",
+            "libero-eda-hosted/v2",
+            "libero-eda-hosted/v3",
+            "libero-eda-hosted/v4",
+        }
         or hosted_manifest.get("counts", {}).get("evaluation_conditions")
         != EXPECTED_CONDITIONS
         or hosted_manifest.get("evaluation", {}).get("revision") != LIBERO_PLUS_REVISION
@@ -592,7 +606,9 @@ def export_base_task(
     pack = output / f"geometry/{shard_key}.glb"
     receipt = output / f"receipts/{shard_key}.json"
     if receipt.is_symlink() or shard.is_symlink() or pack.is_symlink():
-        raise RuntimeError(f"Completed task artifacts contain a symlink: {base.task_key}")
+        raise RuntimeError(
+            f"Completed task artifacts contain a symlink: {base.task_key}"
+        )
     if receipt.is_file():
         value = json.loads(receipt.read_text())
         if (

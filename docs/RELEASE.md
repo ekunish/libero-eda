@@ -15,7 +15,10 @@ STAGING=/path/to/libero-eda-hosted-v2
 SPARSE_V2=/path/to/libero-eda-hosted-v2-metadata
 RECON_INPUT=/path/to/libero-plus-reconstruction-input
 RECON_OUTPUT=/path/to/libero-plus-reconstructions
-RELEASE=/path/to/libero-eda-hosted-v3-patch
+RELEASE_V3=/path/to/libero-eda-hosted-v3-patch
+APPEARANCE_CANDIDATES=/path/to/libero-plus-appearance-candidates
+APPEARANCE_MATCHES=/path/to/libero-plus-appearance-matches
+RELEASE=/path/to/libero-eda-hosted-v4-patch
 
 "$SOURCE/.venv-eda/bin/python" tools/export_hosted_data.py \
   --source-repo "$SOURCE" \
@@ -49,9 +52,30 @@ PYTHONPATH="$SOURCE/LIBERO:$SOURCE" \
 "$SOURCE/.venv-eda/bin/python" tools/upgrade_hosted_data_v3.py \
   --source-v2 "$STAGING" \
   --reconstructions "$RECON_OUTPUT" \
+  --output "$RELEASE_V3"
+
+LIBERO_CONFIG_PATH="$SOURCE/.parc/libero-eval" \
+MUJOCO_GL=osmesa \
+PYTHONPATH="$SOURCE/LIBERO-plus:$SOURCE" \
+"$SOURCE/.venv-eval/bin/python" tools/export_training_appearance_candidates.py \
+  --source-repo "$SOURCE" \
+  --hosted-root "$RELEASE_V3" \
+  --output "$APPEARANCE_CANDIDATES"
+
+"$SOURCE/.venv-eda/bin/python" tools/match_training_appearances.py \
+  --source-repo "$SOURCE" \
+  --hosted-root "$RELEASE_V3" \
+  --candidates "$APPEARANCE_CANDIDATES" \
+  --output "$APPEARANCE_MATCHES"
+
+"$SOURCE/.venv-eda/bin/python" tools/upgrade_hosted_data_v4.py \
+  --source-v3 "$RELEASE_V3" \
+  --candidates "$APPEARANCE_CANDIDATES" \
+  --matches "$APPEARANCE_MATCHES" \
   --output "$RELEASE"
 
-"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$RELEASE"
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_patch_v4.py "$RELEASE" \
+  --base-v3 "$RELEASE_V3"
 ```
 
 The exporter verifies pinned repositories, catalog revisions, entity counts,
@@ -70,7 +94,26 @@ requires unique exact matches for the Original-demo proxy path, and validates
 all remaining MuJoCo replays against the recorded EEF trajectory. Video and EEF
 series remain source data; reconstructed joints and object motion are stored in
 separate assets with explicit method and error metadata. No Plus-specific
-texture, light, camera, or hidden state is inferred.
+texture, light, camera, or hidden state is inferred by the motion stage.
+
+The appearance stage is separate. For the published `env` and `light` path
+tags, it renders the finite 50-candidate official set for each source task and
+first verifies every unique source front-video blob against its content-addressed
+SHA-256 filename and catalog byte size, then compares five video frames. It
+publishes a candidate only after absolute
+error, runner-up margin, multi-frame consistency, and candidate
+self-identifiability all pass. The exact condition ID is an inference rather
+than published episode metadata. Unmatched records remain unmatched and use
+neutral geometry; no nearest-candidate fallback is permitted. Offline RGB and
+segmentation reference banks are excluded from the public release.
+An accepted appearance may still lack an accepted body-motion proxy. In that
+case the official candidate supplies only a static initial scene and fixed
+camera beside the recorded EEF trajectory. The release must not synthesize
+robot or object motion to fill that gap.
+The 4,000 rendered candidates are the complete generated BDDL universe, not
+the balanced evaluation selection. The latter contains 1,076 background and
+1,142 light conditions; training matching must not discard valid generated
+conditions merely because they were excluded from that evaluation subset.
 
 For a release derived from an already validated immutable v2 commit, download
 only its root manifest, integrity index, catalog indexes, and 130 task shards.
@@ -80,7 +123,7 @@ from that exact base commit; it does not silently omit them from the new
 integrity contract. Validate that patch independently before upload:
 
 ```bash
-"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_patch.py "$RELEASE" \
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_patch.py "$RELEASE_V3" \
   --base-v2 "$SPARSE_V2"
 ```
 
@@ -101,32 +144,28 @@ process identifiers while preserving the decompressed Arrow payload:
 "$SOURCE/.venv-eda/bin/python" tools/upgrade_hosted_data_v3.py \
   --source-v2 "$STAGING" \
   --reconstructions "$RECON_OUTPUT" \
-  --output "$RELEASE"
-"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$RELEASE"
+  --output "$RELEASE_V3"
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$RELEASE_V3"
 ```
 
-Create a release branch from the last immutable snapshot. Upload new and
-rewritten artifacts first, the integrity index second to last, and the v3
+Create a release branch from the last immutable v3 snapshot. Upload new and
+rewritten artifacts first, the integrity index second to last, and the v4
 manifest last. Until the final command, the branch continues to expose its
-inherited valid v2 manifest instead of a partial v3 release:
+inherited valid v3 manifest instead of a partial v4 release:
 
 ```bash
 DATA_REPO=ekunish/libero-eda-data
-DATA_BRANCH=v0.3.0-data
-BASE_REVISION=cdbeebc91b28f96e8d7e4f79b0ca21094a2675ef
+DATA_BRANCH=v0.4.0-data
+BASE_REVISION=d0707eeceeac4680f1decd5f434160afca9b134b
 
 hf repos branch create "$DATA_REPO" "$DATA_BRANCH" \
   --type dataset --revision "$BASE_REVISION"
-hf upload "$DATA_REPO" "$RELEASE/assets/reconstruction-scenes" assets/reconstruction-scenes \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add training scene proxies'
-hf upload "$DATA_REPO" "$RELEASE/assets/reconstruction-series" assets/reconstruction-series \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add reconstructed body motion'
-hf upload "$DATA_REPO" "$RELEASE/training-reconstructions" training-reconstructions \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add reconstruction provenance'
+hf upload "$DATA_REPO" "$RELEASE/training-appearances" training-appearances \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add validated training appearance matches'
 hf upload "$DATA_REPO" "$RELEASE/catalog/tasks" catalog/tasks \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Attach reconstruction metadata'
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Attach appearance match metadata'
 hf upload "$DATA_REPO" "$RELEASE/catalog/sources.json" catalog/sources.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Clarify reconstruction sources'
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Clarify appearance inference sources'
 hf upload "$DATA_REPO" "$RELEASE/README.md" README.md \
   --type dataset --revision "$DATA_BRANCH" --commit-message 'Update data documentation'
 hf upload "$DATA_REPO" "$RELEASE/DATA_LICENSES.md" DATA_LICENSES.md \
@@ -134,19 +173,21 @@ hf upload "$DATA_REPO" "$RELEASE/DATA_LICENSES.md" DATA_LICENSES.md \
 hf upload "$DATA_REPO" "$RELEASE/LICENSES" LICENSES \
   --type dataset --revision "$DATA_BRANCH"
 hf upload "$DATA_REPO" "$RELEASE/integrity/artifacts.json" integrity/artifacts.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Seal v3 integrity index'
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Seal v4 integrity index'
 hf upload "$DATA_REPO" "$RELEASE/manifest.json" manifest.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Publish hosted v3 manifest'
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Publish hosted v4 manifest'
 ```
 
 Do not configure the application with a mutable `main` URL. Record the
 40-character Hub commit produced by the final manifest upload, validate every
-indexed remote file against that exact revision, then create the `v0.3.0` data
+indexed remote file against that exact revision, then create the `v0.4.0` data
 tag from it:
 
 ```bash
 "$SOURCE/.venv-eval/bin/python" tools/validate_hosted_remote.py "$DATA_REPO" \
   --revision "$FINAL_DATA_REVISION"
+hf repos tag create "$DATA_REPO" v0.4.0 --type dataset \
+  --revision "$FINAL_DATA_REVISION" --message 'LIBERO EDA hosted data v0.4.0'
 ```
 
 ## 3. Pin, verify, and deploy the app

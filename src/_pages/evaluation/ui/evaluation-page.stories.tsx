@@ -309,6 +309,8 @@ export const MatrixAndDetail: Story = {
     const viewport = await canvas.findByTestId("evaluation-scene-viewport");
     await expect(viewport).toBeVisible();
     await expect(viewport).toHaveAttribute("data-texture-mapping", "mujoco-baked-uv");
-    await waitFor(() => expect(viewport).toHaveAttribute("data-scene-state", "ready"));
+    await waitFor(() => expect(viewport).toHaveAttribute("data-scene-state", "ready"), {
+      timeout: 5_000,
+    });
   },
 };

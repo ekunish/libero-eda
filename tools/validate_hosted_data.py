@@ -16,6 +16,11 @@ from typing import Any
 
 import pyarrow.ipc as ipc
 
+from training_appearance_candidates import (
+    OFFICIAL_FIXED_CANDIDATE_ONLY_BODIES,
+    compatible_motion_body_sets,
+)
+
 EXPECTED = {
     "task_families": 130,
     "original_episodes": 6_500,
@@ -493,7 +498,7 @@ def validate_replay_manifest(
         raise RuntimeError(f"replay task identity mismatch: {replay_id}")
     if replay.get("state_count") != record.get("length"):
         raise RuntimeError(f"replay state count mismatch: {replay_id}")
-    if hosted_schema == "libero-eda-hosted/v3":
+    if hosted_schema in {"libero-eda-hosted/v3", "libero-eda-hosted/v4"}:
         if (
             "scene_series_asset_id" not in replay
             or "scene_reconstruction" not in replay
@@ -527,6 +532,10 @@ def validate_replay_manifest(
                 "metrics",
                 "reason",
             }
+            expected_proxy_schema = "libero-plus-training-scene-proxy/v1"
+            if hosted_schema == "libero-eda-hosted/v4":
+                required.add("appearance_match")
+                expected_proxy_schema = "libero-plus-training-scene-proxy/v2"
             methods = {
                 "original_action_match_proxy",
                 "mujoco_action_replay",
@@ -536,8 +545,7 @@ def validate_replay_manifest(
             }
             if (
                 set(reconstruction) != required
-                or reconstruction.get("schema_version")
-                != "libero-plus-training-scene-proxy/v1"
+                or reconstruction.get("schema_version") != expected_proxy_schema
                 or reconstruction.get("method") not in methods
                 or not isinstance(reconstruction.get("reconstruction_id"), str)
                 or not isinstance(reconstruction.get("source_replay_id"), str)
@@ -680,6 +688,281 @@ def validate_replay_manifest(
             raise RuntimeError(f"unknown dataset in replay shard: {dataset_id}")
 
 
+def validate_training_appearances(
+    root: Path,
+    manifest: dict[str, Any],
+    replay_manifests: dict[str, dict[str, Any]],
+    episode_records: dict[str, dict[str, Any]],
+) -> dict[str, int]:
+    """Validate the public candidate set and every embedded match decision."""
+    top = manifest.get("training_appearances")
+    if (
+        not isinstance(top, dict)
+        or top.get("schema_version") != "libero-plus-training-appearance-match/v1"
+        or top.get("source_tasks") != 40
+        or top.get("candidates") != 4_000
+        or top.get("episodes") != EXPECTED["plus_training_episodes"]
+        or top.get("motion_compatibility")
+        != {
+            "candidate_only_fixed_bodies": sorted(OFFICIAL_FIXED_CANDIDATE_ONLY_BODIES),
+            "static_initial_scene_episodes": 1,
+        }
+    ):
+        raise RuntimeError("training appearance release contract mismatch")
+    candidate_manifest_path = safe_artifact(root, top.get("candidate_manifest"))
+    candidate_root = candidate_manifest_path.parent
+    candidate_manifest = load_json(candidate_manifest_path)
+    if (
+        candidate_manifest.get("schema_version")
+        != "libero-plus-training-appearance-candidates/v1"
+        or candidate_manifest.get("status") != "complete"
+        or candidate_manifest.get("counts", {}).get("source_tasks") != 40
+        or candidate_manifest.get("counts", {}).get("candidates") != 4_000
+    ):
+        raise RuntimeError("training appearance candidate manifest mismatch")
+    tasks = candidate_manifest.get("tasks")
+    if not isinstance(tasks, dict) or len(tasks) != 40:
+        raise RuntimeError("training appearance candidate task coverage mismatch")
+    candidates: dict[tuple[str, str], dict[str, Any]] = {}
+    texture_keys: set[str] = set()
+    candidate_paths = {candidate_manifest_path.relative_to(root).as_posix()}
+    for task_key, task in sorted(tasks.items()):
+        if (
+            not isinstance(task, dict)
+            or task.get("task_key") != task_key
+            or task.get("candidate_count") != 100
+            or "reference_bank" in task
+        ):
+            raise RuntimeError(f"public candidate task contract mismatch: {task_key}")
+        shard_path = safe_artifact(
+            root,
+            (candidate_root / task.get("candidate_shard", ""))
+            .relative_to(root)
+            .as_posix(),
+        )
+        geometry_path = safe_artifact(
+            root,
+            (candidate_root / task.get("geometry_pack", ""))
+            .relative_to(root)
+            .as_posix(),
+        )
+        candidate_paths.update(
+            {
+                shard_path.relative_to(root).as_posix(),
+                geometry_path.relative_to(root).as_posix(),
+            }
+        )
+        if (
+            shard_path.stat().st_size != task.get("candidate_shard_bytes")
+            or digest(shard_path) != task.get("candidate_shard_sha256")
+            or geometry_path.stat().st_size != task.get("geometry_bytes")
+            or digest(geometry_path) != task.get("geometry_sha256")
+            or len(glb_geometry_keys(geometry_path)) != task.get("geometry_count")
+        ):
+            raise RuntimeError(f"public candidate task integrity mismatch: {task_key}")
+        with gzip.open(shard_path, "rt", encoding="utf-8") as stream:
+            shard = json.load(stream)
+        records = shard.get("records")
+        if (
+            shard.get("schema_version")
+            != "libero-plus-training-appearance-candidate-shard/v1"
+            or shard.get("task_key") != task_key
+            or shard.get("geometry_pack") != task.get("geometry_pack")
+            or not isinstance(records, dict)
+            or len(records) != 100
+        ):
+            raise RuntimeError(f"public candidate shard mismatch: {task_key}")
+        categories: Counter[str] = Counter()
+        for candidate_key, candidate in records.items():
+            if (
+                not isinstance(candidate, dict)
+                or "reference_index" in candidate
+                or candidate.get("candidate_key") != candidate_key
+                or candidate.get("base_task_key") != task_key
+                or candidate.get("category") not in {"env", "light"}
+                or not isinstance(candidate.get("snapshot"), dict)
+            ):
+                raise RuntimeError(
+                    f"public candidate record mismatch: {task_key}/{candidate_key}"
+                )
+            categories[candidate["category"]] += 1
+            candidates[(task_key, candidate_key)] = candidate
+            snapshot = candidate["snapshot"]
+            for material in snapshot.get("materials", {}).values():
+                texture_key = material.get("texture_key")
+                if texture_key is not None:
+                    if not isinstance(texture_key, str) or not SHA256_PATTERN.fullmatch(
+                        texture_key
+                    ):
+                        raise RuntimeError(
+                            f"training appearance texture key is invalid: {task_key}"
+                        )
+                    texture_keys.add(texture_key)
+            skybox = snapshot.get("render", {}).get("skybox")
+            if skybox is not None:
+                texture_keys.add(skybox["texture_key"])
+        if categories != {"env": 50, "light": 50}:
+            raise RuntimeError(
+                f"public candidate category coverage mismatch: {task_key}"
+            )
+    if len(candidates) != 4_000:
+        raise RuntimeError("public candidate identity coverage mismatch")
+    for key in texture_keys:
+        texture = safe_artifact(
+            root,
+            (candidate_root / f"textures/{key[:2]}/{key}.png")
+            .relative_to(root)
+            .as_posix(),
+        )
+        candidate_paths.add(texture.relative_to(root).as_posix())
+        if digest(texture) != key:
+            raise RuntimeError(f"training appearance texture hash mismatch: {key}")
+    if any("references" in Path(path).parts for path in candidate_paths):
+        raise RuntimeError("offline appearance reference banks were published")
+
+    match_manifest_path = safe_artifact(root, top.get("match_manifest"))
+    match_root = match_manifest_path.parent
+    match_manifest = load_json(match_manifest_path)
+    if (
+        match_manifest.get("schema_version")
+        != "libero-plus-training-appearance-matches/v1"
+        or match_manifest.get("status") != "complete"
+        or match_manifest.get("counts", {}).get("episodes")
+        != EXPECTED["plus_training_episodes"]
+        or match_manifest.get("comparison", {}).get("fallback") != "forbidden"
+    ):
+        raise RuntimeError("training appearance match provenance mismatch")
+    match_record = match_manifest.get("matches")
+    threshold_record = match_manifest.get("thresholds")
+    if not isinstance(match_record, dict) or not isinstance(threshold_record, dict):
+        raise RuntimeError("training appearance match indexes are missing")
+    match_path = safe_artifact(
+        root,
+        (match_root / match_record.get("path", "")).relative_to(root).as_posix(),
+    )
+    threshold_path = safe_artifact(
+        root,
+        (match_root / threshold_record.get("path", "")).relative_to(root).as_posix(),
+    )
+    if (
+        match_path.stat().st_size != match_record.get("bytes")
+        or digest(match_path) != match_record.get("sha256")
+        or threshold_path.stat().st_size != threshold_record.get("bytes")
+        or digest(threshold_path) != threshold_record.get("sha256")
+    ):
+        raise RuntimeError("training appearance match index integrity mismatch")
+    matches = load_json(match_path)
+    by_id = {item.get("replay_id"): item for item in matches}
+    plus_ids = {
+        replay_id
+        for replay_id, replay in replay_manifests.items()
+        if replay.get("dataset_id") == "lerobot_libero_plus"
+    }
+    if (
+        not isinstance(matches, list)
+        or len(matches) != EXPECTED["plus_training_episodes"]
+        or len(by_id) != len(matches)
+        or set(by_id) != plus_ids
+    ):
+        raise RuntimeError("training appearance match replay coverage mismatch")
+    statuses: Counter[str] = Counter()
+    embedded_keys = {
+        "status",
+        "category",
+        "candidate_key",
+        "candidate_name",
+        "candidate_variant",
+        "candidate_bddl",
+        "candidate_bddl_sha256",
+        "best_score",
+        "runner_up_score",
+        "relative_margin",
+        "frame_wins",
+        "frame_count",
+        "reason",
+    }
+    static_initial_scenes = 0
+    for replay_id, match in by_id.items():
+        replay = replay_manifests[replay_id]
+        record = episode_records[replay_id]
+        reconstruction = replay["scene_reconstruction"]
+        embedded = reconstruction.get("appearance_match")
+        if (
+            not isinstance(embedded, dict)
+            or embedded.get("schema_version")
+            != "libero-plus-training-appearance-match/v1"
+            or {key: embedded.get(key) for key in embedded_keys}
+            != {key: match.get(key) for key in embedded_keys}
+            or match.get("category") != record.get("training_environment_category")
+        ):
+            raise RuntimeError(f"embedded appearance match differs: {replay_id}")
+        status = match.get("status")
+        statuses[status] += 1
+        candidate_key = match.get("candidate_key")
+        if status == "matched":
+            candidate = candidates.get((replay["task_key"], candidate_key))
+            candidate_bodies = (
+                {body["name"] for body in candidate["snapshot"]["bodies"]}
+                if candidate
+                else set()
+            )
+            motion_bodies = set(replay.get("body_names", []))
+            motion_compatible = (
+                compatible_motion_body_sets(candidate_bodies, motion_bodies)
+                if motion_bodies
+                else (
+                    replay.get("scene_asset_id") is None
+                    and replay.get("scene_series_asset_id") is None
+                    and reconstruction.get("method") == "unavailable"
+                    and reconstruction.get("object_motion") == "not_published"
+                    and replay.get("scene_fidelity") == "analysis_approximate"
+                )
+            )
+            if not motion_bodies and motion_compatible:
+                static_initial_scenes += 1
+            if (
+                not candidate
+                or candidate.get("category") != match.get("category")
+                or candidate.get("name") != match.get("candidate_name")
+                or candidate.get("variant") != match.get("candidate_variant")
+                or reconstruction.get("appearance")
+                != "video_matched_official_candidate"
+                or not motion_compatible
+            ):
+                raise RuntimeError(
+                    f"accepted appearance candidate mismatch: {replay_id}"
+                )
+        elif status == "unmatched":
+            if (
+                candidate_key is not None
+                or reconstruction.get("appearance") != "not_available"
+            ):
+                raise RuntimeError(
+                    f"unmatched appearance contract mismatch: {replay_id}"
+                )
+        elif status == "not_applicable":
+            if (
+                candidate_key is not None
+                or reconstruction.get("appearance") != "original_libero_canonical"
+            ):
+                raise RuntimeError(
+                    f"non-applicable appearance contract mismatch: {replay_id}"
+                )
+        else:
+            raise RuntimeError(f"unknown appearance match status: {replay_id}/{status}")
+    result = {key: statuses[key] for key in ("matched", "unmatched", "not_applicable")}
+    if result != top.get("statuses") or result != match_manifest.get("counts", {}).get(
+        "statuses"
+    ):
+        raise RuntimeError("training appearance status aggregates mismatch")
+    if (
+        static_initial_scenes
+        != top["motion_compatibility"]["static_initial_scene_episodes"]
+    ):
+        raise RuntimeError("training appearance static-scene count mismatch")
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
@@ -705,6 +988,7 @@ def main() -> None:
         "libero-eda-hosted/v1",
         "libero-eda-hosted/v2",
         "libero-eda-hosted/v3",
+        "libero-eda-hosted/v4",
     }:
         raise RuntimeError("manifest schema mismatch")
     if schema_version == "libero-eda-hosted/v1" and not args.allow_v1:
@@ -872,11 +1156,16 @@ def main() -> None:
         raise RuntimeError("competition-specific source leaked into public export")
 
     reconstruction_counts = None
-    if schema_version == "libero-eda-hosted/v3":
+    if schema_version in {"libero-eda-hosted/v3", "libero-eda-hosted/v4"}:
         top = manifest.get("training_reconstructions")
         if (
             not isinstance(top, dict)
-            or top.get("schema_version") != "libero-plus-training-scene-proxy/v1"
+            or top.get("schema_version")
+            != (
+                "libero-plus-training-scene-proxy/v2"
+                if schema_version == "libero-eda-hosted/v4"
+                else "libero-plus-training-scene-proxy/v1"
+            )
             or top.get("plus_episodes") != EXPECTED["plus_training_episodes"]
             or top.get("exact_action_matches") != 12_609
             or top.get("simulated_or_unavailable_episodes") != 1_738
@@ -956,13 +1245,18 @@ def main() -> None:
                 "method",
                 "source_replay_id",
                 "source_action_sha256",
-                "appearance",
                 "object_motion",
             ):
                 if reconstruction[key] != mapping.get(key):
                     raise RuntimeError(
                         f"published reconstruction differs from provenance: {replay_id}/{key}"
                     )
+            if schema_version == "libero-eda-hosted/v3" and reconstruction[
+                "appearance"
+            ] != mapping.get("appearance"):
+                raise RuntimeError(
+                    f"published reconstruction differs from provenance: {replay_id}/appearance"
+                )
             mapping_metrics = mapping.get("metrics")
             if not isinstance(mapping_metrics, dict) or reconstruction["metrics"] != {
                 key: mapping_metrics.get(key)
@@ -1009,7 +1303,17 @@ def main() -> None:
             raise RuntimeError("training reconstruction method counts mismatch")
 
     evaluation_scene_counts = None
-    if schema_version in {"libero-eda-hosted/v2", "libero-eda-hosted/v3"}:
+    appearance_counts = None
+    if schema_version == "libero-eda-hosted/v4":
+        appearance_counts = validate_training_appearances(
+            root, manifest, replay_manifest_by_id, episode_by_id
+        )
+
+    if schema_version in {
+        "libero-eda-hosted/v2",
+        "libero-eda-hosted/v3",
+        "libero-eda-hosted/v4",
+    }:
         evaluation_scene_counts = validate_evaluation_scenes(root, manifest, catalog)
 
     samples = [episodes[0]["replay_id"], episodes[-1]["replay_id"]]
@@ -1029,6 +1333,7 @@ def main() -> None:
         "sources": sum(len(group["sources"]) for group in sources["groups"]),
         "evaluation_scenes": evaluation_scene_counts,
         "training_reconstructions": reconstruction_counts,
+        "training_appearances": appearance_counts,
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
 
