@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import {
   aggregateAmbient,
+  configureMujocoMappedTexture,
   createMujocoCubeTexture,
   createMujocoPhongMaterial,
   mujocoCubeScale,
@@ -106,7 +107,8 @@ describe("MuJoCo render contract", () => {
   });
 
   it("replaces arbitrary PBR with a source Phong material", () => {
-    const source = new THREE.MeshStandardMaterial();
+    const texture = new THREE.Texture();
+    const source = new THREE.MeshStandardMaterial({ map: texture });
     source.userData.mujocoMaterial = classic;
     const parsed = parseMujocoMaterial(source);
     const material = createMujocoPhongMaterial(
@@ -118,6 +120,20 @@ describe("MuJoCo render contract", () => {
     expect(material.shininess).toBe(96);
     expect(material.emissiveIntensity).toBe(0.1);
     expect(material.userData.parcMujocoConverted).toBe(true);
+    expect(material.map).toBe(texture);
+    expect(texture.flipY).toBe(false);
+  });
+
+  it("uses baked glTF UVs for standalone MuJoCo texture images", () => {
+    const texture = new THREE.Texture();
+    expect(texture.flipY).toBe(true);
+
+    expect(configureMujocoMappedTexture(texture)).toBe(texture);
+    expect(texture.flipY).toBe(false);
+    expect(texture.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(texture.wrapS).toBe(THREE.RepeatWrapping);
+    expect(texture.wrapT).toBe(THREE.RepeatWrapping);
+    expect(texture.version).toBe(1);
   });
 
   it("rejects a material without raw MuJoCo values", () => {

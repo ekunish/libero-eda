@@ -308,6 +308,7 @@ export const MatrixAndDetail: Story = {
     await expect(await canvas.findByText("Official state index 0", { exact: false })).toBeVisible();
     const viewport = await canvas.findByTestId("evaluation-scene-viewport");
     await expect(viewport).toBeVisible();
+    await expect(viewport).toHaveAttribute("data-texture-mapping", "mujoco-baked-uv");
     await waitFor(() => expect(viewport).toHaveAttribute("data-scene-state", "ready"));
   },
 };

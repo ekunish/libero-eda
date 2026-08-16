@@ -142,6 +142,7 @@ test("Evaluation is sourced from the pinned official repository and has no Track
   ).toBeVisible();
   const evaluationScene = page.getByTestId("evaluation-scene-viewport");
   await expect(evaluationScene).toBeVisible();
+  await expect(evaluationScene).toHaveAttribute("data-texture-mapping", "mujoco-baked-uv");
   await expect(evaluationScene).toHaveAttribute("data-scene-state", "ready", { timeout: 120_000 });
   await expect(page.getByRole("img", { name: /Interactive initial 3D scene/ })).toBeVisible({
     timeout: 20_000,

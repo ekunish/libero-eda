@@ -22,7 +22,6 @@ import {
   createMujocoCubeTexture,
   createMujocoPhongMaterial,
   type MujocoRenderContract,
-  mujocoCubeScale,
 } from "../model/mujoco-render";
 import {
   createTaskCueMaterialBindings,
@@ -120,7 +119,6 @@ function EvaluationDigitalTwin({
     root.name = `Evaluation initial scene: ${record.condition.task_key}`;
     const bodyByName = new Map<string, THREE.Group>();
     const cueMaterials: TaskCueMaterial[] = [];
-    const cubeByTexture = new Map<string, THREE.CubeTexture>();
     const convertedMaterials = new Set<THREE.MeshPhongMaterial>();
     const shadows = lightRender.lights.some((light) => light.active && light.cast_shadow);
     for (const body of record.snapshot.bodies) {
@@ -139,30 +137,19 @@ function EvaluationDigitalTwin({
       if (!body || !geometry || !classic) {
         throw new Error(`Evaluation scene reference is missing: ${geom.name}`);
       }
+      const map = classic.texture_key ? textures.get(classic.texture_key) : null;
+      if (classic.texture_key && !map) {
+        throw new Error(`Evaluation texture was not loaded: ${classic.texture_key}`);
+      }
+      if (map && !geometry.getAttribute("uv")) {
+        throw new Error(`Evaluation textured geometry has no baked UV: ${geom.name}`);
+      }
       const source = new THREE.MeshBasicMaterial({
         name: geom.material_key,
-        map: classic.texture_key ? (textures.get(classic.texture_key) ?? null) : null,
+        map,
       });
       source.userData.mujocoMaterial = structuredClone(classic);
-      let cubeMapping: { texture: THREE.CubeTexture; scale: THREE.Vector3 } | undefined;
-      if (classic.texture_type === 1) {
-        if (!classic.texture_key) {
-          throw new Error(`Evaluation cube texture is missing: ${geom.name}`);
-        }
-        let cube = cubeByTexture.get(classic.texture_key);
-        if (!cube) {
-          const texture = textures.get(classic.texture_key);
-          if (!texture)
-            throw new Error(`Evaluation texture was not loaded: ${classic.texture_key}`);
-          cube = createMujocoCubeTexture(texture);
-          cubeByTexture.set(classic.texture_key, cube);
-        }
-        cubeMapping = {
-          texture: cube,
-          scale: mujocoCubeScale(geom.geom_type, geom.geom_size, classic.texuniform),
-        };
-      }
-      const material = createMujocoPhongMaterial(source, classic, lightRender, cubeMapping);
+      const material = createMujocoPhongMaterial(source, classic, lightRender);
       source.dispose();
       convertedMaterials.add(material);
       const mesh = new THREE.Mesh(geometry, material);
@@ -184,7 +171,6 @@ function EvaluationDigitalTwin({
     }
     root.updateMatrixWorld(true);
     root.userData.cueMaterials = cueMaterials;
-    root.userData.cubeTextures = cubeByTexture;
     root.userData.convertedMaterials = convertedMaterials;
     return root;
   }, [cueRoles, gltf.scene, lightRender, record, textures]);
@@ -209,11 +195,6 @@ function EvaluationDigitalTwin({
       });
       for (const material of scene.userData.convertedMaterials as Set<THREE.Material>) {
         material.dispose();
-      }
-      for (const texture of (
-        scene.userData.cubeTextures as Map<string, THREE.CubeTexture>
-      ).values()) {
-        texture.dispose();
       }
     },
     [scene],
@@ -372,6 +353,7 @@ export function EvaluationSceneViewport({
       data-testid="evaluation-scene-viewport"
       data-scene-state={currentLoad.phase}
       data-scene-condition={record.condition.task_key}
+      data-texture-mapping="mujoco-baked-uv"
     >
       <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-1 border-b border-base-300 px-2 py-1.5">
         <Button

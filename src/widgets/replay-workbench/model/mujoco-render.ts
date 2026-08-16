@@ -152,6 +152,17 @@ export function sourceSpecularScale(render: MujocoRenderContract): number {
   return diffuse > 1e-6 ? THREE.MathUtils.clamp(specular / diffuse, 0, 2) : 1;
 }
 
+export function configureMujocoMappedTexture(texture: THREE.Texture): THREE.Texture {
+  // Scene v3 geometry already stores glTF-oriented UVs. TextureLoader defaults
+  // to flipY=true for standalone images, which would undo that conversion.
+  texture.flipY = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export function createMujocoPhongMaterial(
   source: THREE.Material,
   classic: MujocoClassicMaterial,
@@ -160,12 +171,7 @@ export function createMujocoPhongMaterial(
 ): THREE.MeshPhongMaterial {
   const sourceWithMap = source as THREE.Material & { map?: THREE.Texture | null };
   const map = cubeMapping ? null : (sourceWithMap.map ?? null);
-  if (map) {
-    map.colorSpace = THREE.SRGBColorSpace;
-    map.wrapS = THREE.RepeatWrapping;
-    map.wrapT = THREE.RepeatWrapping;
-    map.needsUpdate = true;
-  }
+  if (map) configureMujocoMappedTexture(map);
   const color = new THREE.Color(classic.rgba[0], classic.rgba[1], classic.rgba[2]);
   const material = new THREE.MeshPhongMaterial({
     name: source.name,
