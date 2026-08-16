@@ -9,20 +9,8 @@ import type {
   ReplayManifest,
   ReplaySeries,
   TaskDetail,
-  TrainingAppearanceRecord,
 } from "@/shared/api";
 import { ReplayWorkbench } from "./replay-workbench";
-
-const MATCHED_TEXTURE_KEY = "d".repeat(64);
-
-function tinyTexturePng(): Uint8Array {
-  return Uint8Array.from(
-    atob(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mPY1+QGAAOIAYeqPyFgAAAAAElFTkSuQmCC",
-    ),
-    (character) => character.charCodeAt(0),
-  );
-}
 
 function analysisSceneGlb(): Uint8Array {
   const vertices = new Float32Array([
@@ -38,7 +26,12 @@ function analysisSceneGlb(): Uint8Array {
     4, 3, 4, 7,
   ]);
   const texcoords = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1]);
-  const texturePng = tinyTexturePng();
+  const texturePng = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mPY1+QGAAOIAYeqPyFgAAAAAElFTkSuQmCC",
+    ),
+    (character) => character.charCodeAt(0),
+  );
   const textureOffset =
     vertices.byteLength + normals.byteLength + indices.byteLength + texcoords.byteLength;
   const binary = new Uint8Array(textureOffset + texturePng.byteLength);
@@ -97,7 +90,7 @@ function analysisSceneGlb(): Uint8Array {
       scenes: [{ nodes: [0, 1, 2, 3, 4] }],
       nodes: [
         {
-          name: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          name: "robot0_link0",
           mesh: 0,
           scale: [0.22, 0.22, 0.72],
           extras: { mujocoBodyIndex: 0, mujocoBodyName: "robot0_link0" },
@@ -442,28 +435,12 @@ const reconstructedPlusManifest: ReplayManifest = {
   body_names: originalManifest.body_names,
   scene_cameras: [],
   scene_reconstruction: {
-    schema_version: "libero-plus-training-scene-proxy/v2",
+    schema_version: "libero-plus-training-scene-proxy/v1",
     reconstruction_id: "original-proxy-original-libero-libero_spatial-005-00",
     method: "original_action_match_proxy",
     source_replay_id: originalManifest.replay_id,
     source_action_sha256: "a".repeat(64),
     appearance: "original_libero_canonical",
-    appearance_match: {
-      schema_version: "libero-plus-training-appearance-match/v1",
-      status: "not_applicable",
-      category: "camera_view",
-      candidate_key: null,
-      candidate_name: null,
-      candidate_variant: null,
-      candidate_bddl: null,
-      candidate_bddl_sha256: null,
-      best_score: null,
-      runner_up_score: null,
-      relative_margin: null,
-      frame_wins: null,
-      frame_count: 0,
-      reason: "The official episode path tag has no finite appearance candidate library.",
-    },
     object_motion: "original_successful_demo_proxy",
     goal_success: null,
     metrics: {
@@ -475,160 +452,6 @@ const reconstructedPlusManifest: ReplayManifest = {
     reason:
       "Task, action sequence, and length exactly match this successful Original LIBERO demo; the Original body motion is shown as a proxy.",
   },
-};
-
-function reconstructionOf(manifest: ReplayManifest) {
-  if (!manifest.scene_reconstruction) throw new Error("Story fixture reconstruction is missing");
-  return manifest.scene_reconstruction;
-}
-
-const matchedAppearanceManifest: ReplayManifest = {
-  ...reconstructedPlusManifest,
-  replay_id: "demo-995",
-  source_episode_id: "995",
-  episode_id: 995,
-  scene_reconstruction: {
-    ...reconstructionOf(reconstructedPlusManifest),
-    appearance: "video_matched_official_candidate",
-    appearance_match: {
-      schema_version: "libero-plus-training-appearance-match/v1",
-      status: "matched",
-      category: "env",
-      candidate_key: "env:table_24",
-      candidate_name: "storybook_task_table_24",
-      candidate_variant: "table_24",
-      candidate_bddl: "bddl_files/libero_10/storybook_task_table_24.bddl",
-      candidate_bddl_sha256: "b".repeat(64),
-      best_score: 0.091,
-      runner_up_score: 0.125,
-      relative_margin: 0.378,
-      frame_wins: 5,
-      frame_count: 5,
-      reason: "passed_absolute_margin_and_multiframe_consistency",
-    },
-  },
-};
-
-const matchedStaticInitialSceneManifest: ReplayManifest = {
-  ...matchedAppearanceManifest,
-  replay_id: "demo-12273",
-  source_episode_id: "12273",
-  episode_id: 12273,
-  scene_asset_id: null,
-  scene_series_asset_id: null,
-  scene_hash: null,
-  scene_schema: "legacy-analysis",
-  scene_fidelity: "analysis_approximate",
-  scene_fidelity_reason:
-    "The validated official candidate supplies the initial scene and fixed camera. Object and robot body motion is not published, so the candidate scene remains static while the recorded EEF trajectory advances.",
-  body_names: [],
-  scene_cameras: [],
-  scene_reconstruction: {
-    ...reconstructionOf(matchedAppearanceManifest),
-    method: "unavailable",
-    object_motion: "not_published",
-    goal_success: false,
-    reason:
-      "The validated official candidate supplies the initial scene and fixed camera. Object and robot body motion is not published, so the candidate scene remains static while the recorded EEF trajectory advances.",
-  },
-  provenance: {
-    ...matchedAppearanceManifest.provenance,
-    digital_twin_available: false,
-    initial_scene_available: true,
-    initial_scene_motion: "static_not_published",
-  },
-};
-
-const unmatchedAppearanceManifest: ReplayManifest = {
-  ...reconstructedPlusManifest,
-  replay_id: "demo-996",
-  source_episode_id: "996",
-  episode_id: 996,
-  scene_reconstruction: {
-    ...reconstructionOf(reconstructedPlusManifest),
-    appearance: "not_available",
-    appearance_match: {
-      schema_version: "libero-plus-training-appearance-match/v1",
-      status: "unmatched",
-      category: "env",
-      candidate_key: null,
-      candidate_name: null,
-      candidate_variant: null,
-      candidate_bddl: null,
-      candidate_bddl_sha256: null,
-      best_score: 0.194,
-      runner_up_score: 0.198,
-      relative_margin: 0.021,
-      frame_wins: 3,
-      frame_count: 5,
-      reason: "runner_up_margin_below_calibrated_limit",
-    },
-  },
-};
-
-const matchedAppearanceRecord: TrainingAppearanceRecord = {
-  candidate_key: "env:table_24",
-  base_task_key: matchedAppearanceManifest.task_key ?? "",
-  category: "env",
-  variant: "table_24",
-  name: "storybook_task_table_24",
-  runtime_bddl: "bddl_files/libero_10/storybook_task_table_24.bddl",
-  resolved_bddl: "bddl_files/libero_10/storybook_task_table_24.bddl",
-  resolved_bddl_sha256: "b".repeat(64),
-  snapshot: {
-    schema_version: "libero-evaluation-scene-snapshot/v1",
-    scene_exporter_revision: "mujoco-classic-uv3",
-    bodies: matchedAppearanceManifest.body_names.map((name) => ({
-      name,
-      translation: [0, 0, 0],
-      rotation: [0, 0, 0, 1],
-    })),
-    geoms: [
-      {
-        name: "storybook_matched_geom",
-        body: matchedAppearanceManifest.body_names[0] ?? "robot0_link0",
-        geometry_key: "a".repeat(64),
-        material_key: "c".repeat(64),
-        translation: [0, 0, 0],
-        rotation: [0, 0, 0, 1],
-        geom_type: 6,
-        geom_size: [0.2, 0.2, 0.2],
-        reflective_surface: null,
-      },
-    ],
-    materials: {
-      ["c".repeat(64)]: {
-        rgba: [0.32, 0.58, 0.79, 1],
-        emission: 0,
-        specular: 0.4,
-        shininess: 0.5,
-        reflectance: 0,
-        texuniform: false,
-        texture_type: 1,
-        texture_repeat: [1, 1],
-        texture_key: MATCHED_TEXTURE_KEY,
-      },
-    },
-    render: {
-      renderer: "mujoco_classic",
-      color_space: "srgb_textures_linear_lighting",
-      tone_mapping: "none",
-      headlight: {
-        active: true,
-        ambient: [0.1, 0.1, 0.1],
-        diffuse: [0.4, 0.4, 0.4],
-        specular: [0.5, 0.5, 0.5],
-      },
-      lights: [],
-      shadow_map_size: 4096,
-      skybox: null,
-    },
-    cameras: [originalManifest.scene_cameras[0]].filter(
-      (camera): camera is ReplayManifest["scene_cameras"][number] => camera != null,
-    ),
-  },
-  geometry_pack_asset_id: "matched-geometry-pack",
-  texture_base_asset_id: "/training-appearances/textures/",
 };
 
 const delayedSceneManifest: ReplayManifest = {
@@ -794,7 +617,6 @@ function handlers(
     manifests?: Record<string, ReplayManifest>;
     seriesDelayReplayId?: string;
     sceneSeriesDelayMs?: number;
-    appearance?: TrainingAppearanceRecord;
   } = {},
 ) {
   let sceneAttempts = 0;
@@ -829,11 +651,6 @@ function handlers(
       if (sceneOptions.sceneSeriesDelayMs) await delay(sceneOptions.sceneSeriesDelayMs);
       return HttpResponse.json(series);
     }),
-    http.get("/api/v1/replays/:replayId/appearance", () =>
-      sceneOptions.appearance
-        ? HttpResponse.json(sceneOptions.appearance)
-        : new HttpResponse(null, { status: 404 }),
-    ),
     http.get("/api/v1/datasets/lerobot_libero_plus/training-environment-categories", () =>
       HttpResponse.json({
         dataset_id: "lerobot_libero_plus",
@@ -865,17 +682,6 @@ function handlers(
         headers: { "Content-Type": "model/gltf-binary" },
       });
     }),
-    http.get(
-      "/matched-geometry-pack",
-      () =>
-        new HttpResponse(analysisSceneGlb(), {
-          headers: { "Content-Type": "model/gltf-binary" },
-        }),
-    ),
-    http.get(
-      "/training-appearances/textures/:prefix/:filename",
-      () => new HttpResponse(tinyTexturePng(), { headers: { "Content-Type": "image/png" } }),
-    ),
     http.get("/api/v1/media/:assetId", () => new HttpResponse(null, { status: 204 })),
   ];
 }
@@ -1017,7 +823,6 @@ export const RecordTransitionKeepsWorkspace: Story = {
     const canvas = within(canvasElement);
     const workspace = await canvas.findByTestId("replay-workbench");
     await expect(workspace).toHaveAttribute("data-displayed-replay-id", originalManifest.replay_id);
-    await canvas.findByTestId("task-definition-inspector");
 
     await userEvent.click(canvas.getByRole("button", { name: "Load next fixture record" }));
 
@@ -1026,7 +831,6 @@ export const RecordTransitionKeepsWorkspace: Story = {
     );
     await expect(workspace).toHaveAttribute("data-displayed-replay-id", originalManifest.replay_id);
     await expect(canvas.queryByTestId("replay-workbench-skeleton")).toBeNull();
-    await expect(canvasElement.querySelectorAll(".eda-skeleton")).toHaveLength(0);
 
     await waitFor(
       () =>
@@ -1086,7 +890,6 @@ export const SceneModelRetry: Story = {
     await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
       timeout: 3_000,
     });
-    await expect(canvas.getByText("MuJoCo-matched 3D")).toBeVisible();
     await expect(canvas.queryByTestId("scene-model-error")).toBeNull();
   },
 };
@@ -1096,7 +899,7 @@ export const LegacyApproximateDigitalTwin: Story = {
   parameters: { msw: { handlers: handlers(legacyOriginalManifest, true) } },
   globals: { viewport: { value: "desktop2k", isRotated: false } },
   play: async ({ canvasElement }) => {
-    await expect(await within(canvasElement).findByText("Approximate 3D")).toBeVisible();
+    await expect(await within(canvasElement).findByText("Approximate proxy 3D")).toBeVisible();
   },
 };
 
@@ -1201,106 +1004,21 @@ export const LiberoPlusApproximateReconstruction: Story = {
   globals: { viewport: { value: "desktop2k", isRotated: false } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(await canvas.findByText("Loading approximate 3D")).toBeVisible();
+    await expect(await canvas.findByText("Loading proxy 3D")).toBeVisible();
     await expect(await canvas.findByTestId("scene-model-loading")).toBeVisible();
     const inspector = await canvas.findByTestId("reconstruction-inspector");
-    await expect(inspector).toHaveTextContent("Matched Original demo");
+    await expect(inspector).toHaveTextContent("Action-matched Original demo proxy");
+    await expect(inspector).toHaveTextContent("Approximate proxy — not the recorded scene");
+    await expect(inspector).toHaveTextContent("videos are the visual source of truth");
     await expect(inspector).toHaveTextContent("RMSE 6.4 mm");
     await expect(inspector).toHaveTextContent(
-      "canonical Original LIBERO appearance is shown only as an approximate spatial reference",
+      "appearance and hidden scene state are not recovered",
     );
     await expect(canvas.getByRole("button", { name: "Front sync" })).toBeDisabled();
     await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
       timeout: 3_000,
     });
-    await expect(canvas.getByText("Approximate 3D")).toBeVisible();
-  },
-};
-
-export const LiberoPlusMatchedAppearance: Story = {
-  args: { replayId: matchedAppearanceManifest.replay_id },
-  parameters: {
-    msw: {
-      handlers: handlers(
-        matchedAppearanceManifest,
-        false,
-        replayContext(matchedAppearanceManifest),
-        { appearance: matchedAppearanceRecord },
-      ),
-    },
-  },
-  globals: { viewport: { value: "desktop2k", isRotated: false } },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    const inspector = await canvas.findByTestId("reconstruction-inspector");
-    await expect(inspector).toHaveTextContent("Video-matched official candidate");
-    await expect(inspector).toHaveTextContent("Background (env)");
-    await expect(inspector).toHaveTextContent("table_24");
-    await expect(inspector).toHaveTextContent("storybook_task_table_24.bddl");
-    await expect(inspector).toHaveTextContent("5/5");
-    await expect(inspector).toHaveTextContent("37.8%");
-    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
-      timeout: 3_000,
-    });
-    await expect(canvas.queryByTestId("scene-model-error")).toBeNull();
-    await expect(canvas.getByRole("button", { name: "Front sync" })).toBeEnabled();
-  },
-};
-
-export const LiberoPlusMatchedStaticInitialScene: Story = {
-  args: { replayId: matchedStaticInitialSceneManifest.replay_id },
-  parameters: {
-    msw: {
-      handlers: handlers(
-        matchedStaticInitialSceneManifest,
-        false,
-        replayContext(matchedStaticInitialSceneManifest),
-        { appearance: matchedAppearanceRecord },
-      ),
-    },
-  },
-  globals: { viewport: { value: "desktop2k", isRotated: false } },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await expect(await canvas.findByText("Loading video-matched appearance")).toBeVisible();
-    const inspector = await canvas.findByTestId("reconstruction-inspector");
-    await expect(inspector).toHaveTextContent("Video-matched official candidate");
-    await expect(inspector).toHaveTextContent("Object motionNot published");
-    await expect(inspector).toHaveTextContent("candidate scene remains static");
-    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
-      timeout: 3_000,
-    });
-    await expect(canvas.getByText("Video-matched initial scene")).toBeVisible();
-    await expect(canvas.getByTestId("static-initial-scene-label")).toBeVisible();
-    await expect(canvas.queryByTestId("scene-model-error")).toBeNull();
-    await expect(canvas.getByRole("button", { name: "Front sync" })).toBeEnabled();
-  },
-};
-
-export const LiberoPlusUnmatchedAppearance: Story = {
-  args: { replayId: unmatchedAppearanceManifest.replay_id },
-  parameters: {
-    msw: {
-      handlers: handlers(
-        unmatchedAppearanceManifest,
-        false,
-        replayContext(unmatchedAppearanceManifest),
-      ),
-    },
-  },
-  globals: { viewport: { value: "desktop2k", isRotated: false } },
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    const inspector = await canvas.findByTestId("reconstruction-inspector");
-    await expect(inspector).toHaveTextContent("Neutral geometry");
-    await expect(inspector).toHaveTextContent("No official appearance candidate passed");
-    await expect(inspector).toHaveTextContent("No fallback candidate");
-    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
-      timeout: 3_000,
-    });
-    await expect(canvas.getByText("Neutral 3D reference")).toBeVisible();
-    await expect(canvas.queryByTestId("scene-model-error")).toBeNull();
-    await expect(canvas.getByRole("button", { name: "Front sync" })).toBeDisabled();
+    await expect(canvas.getByText("Approximate proxy 3D")).toBeVisible();
   },
 };
 

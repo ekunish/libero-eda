@@ -16,14 +16,13 @@ import type {
   TaskDetail,
   TaskEpisodes,
   TaskFamily,
-  TrainingAppearanceRecord,
   TrainingEnvironmentCategories,
 } from "./contracts";
 import { type EvaluationCategory, evaluationCategorySchema } from "./evaluation-category";
 import { validateHostedManifestUrl } from "./manifest-url";
 
 const DEFAULT_MANIFEST_URL =
-  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/e42cf0101811f5f922a0f0122e8d4890ef200180/manifest.json";
+  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/d0707eeceeac4680f1decd5f434160afca9b134b/manifest.json";
 const manifestUrl = validateHostedManifestUrl(
   process.env.NEXT_PUBLIC_LIBERO_EDA_DATA_MANIFEST ?? DEFAULT_MANIFEST_URL,
 );
@@ -41,7 +40,7 @@ const relativeArtifactSchema = z
   );
 
 const manifestSchema = z.object({
-  schema_version: z.literal("libero-eda-hosted/v4"),
+  schema_version: z.literal("libero-eda-hosted/v3"),
   revision: z.string().min(1),
   generated_at: z.string().min(1),
   catalog: z.object({
@@ -63,32 +62,13 @@ const manifestSchema = z.object({
     evaluation_conditions: z.literal(10030),
   }),
   training_reconstructions: z.object({
-    schema_version: z.literal("libero-plus-training-scene-proxy/v2"),
+    schema_version: z.literal("libero-plus-training-scene-proxy/v1"),
     source_manifest: relativeArtifactSchema,
     plus_episodes: z.literal(14347),
     exact_action_matches: z.literal(12609),
     simulated_or_unavailable_episodes: z.literal(1738),
     unique_reconstructions: z.literal(207),
     methods: z.record(z.string(), z.number().int().nonnegative()),
-  }),
-  training_appearances: z.object({
-    schema_version: z.literal("libero-plus-training-appearance-match/v1"),
-    candidate_manifest: relativeArtifactSchema,
-    match_manifest: relativeArtifactSchema,
-    source_tasks: z.literal(40),
-    candidates: z.literal(4000),
-    episodes: z.literal(14347),
-    statuses: z
-      .object({
-        matched: z.number().int().nonnegative(),
-        unmatched: z.number().int().nonnegative(),
-        not_applicable: z.number().int().nonnegative(),
-      })
-      .refine((value) => Object.values(value).reduce((total, count) => total + count, 0) === 14347),
-    motion_compatibility: z.object({
-      candidate_only_fixed_bodies: z.tuple([z.literal("living_room_table_col")]),
-      static_initial_scene_episodes: z.literal(1),
-    }),
   }),
   integrity: z.object({
     index: z.literal("integrity/artifacts.json"),
@@ -304,57 +284,6 @@ const evaluationSceneShardSchema = z.object({
   geometry_pack: relativeArtifactSchema,
   records: z.record(z.string().min(1), sceneRecordSchema),
 });
-const trainingAppearanceCandidateSchema = z.object({
-  candidate_key: z.string().min(1),
-  base_task_key: z.string().min(1),
-  category: z.enum(["env", "light"]),
-  variant: z.string().min(1),
-  name: z.string().min(1),
-  runtime_bddl: relativeArtifactSchema,
-  resolved_bddl: relativeArtifactSchema,
-  resolved_bddl_sha256: sha256Schema,
-  snapshot: sceneSnapshotSchema,
-});
-const trainingAppearanceShardSchema = z.object({
-  schema_version: z.literal("libero-plus-training-appearance-candidate-shard/v1"),
-  task_key: z.string().min(1),
-  geometry_pack: relativeArtifactSchema,
-  records: z.record(z.string().min(1), trainingAppearanceCandidateSchema),
-});
-const trainingAppearanceManifestSchema = z.object({
-  schema_version: z.literal("libero-plus-training-appearance-candidates/v1"),
-  status: z.literal("complete"),
-  source: z
-    .object({
-      repository: z.literal("sylvestf/LIBERO-plus"),
-      revision: z.string().regex(/^[0-9a-f]{40}$/),
-    })
-    .passthrough(),
-  counts: z.object({
-    source_tasks: z.literal(40),
-    candidates: z.literal(4000),
-    background_candidates: z.literal(2000),
-    light_candidates: z.literal(2000),
-    geometry_assets: z.number().int().positive(),
-    texture_assets: z.number().int().positive(),
-  }),
-  tasks: z.record(
-    z.string().min(1),
-    z
-      .object({
-        task_key: z.string().min(1),
-        candidate_count: z.literal(100),
-        candidate_shard: relativeArtifactSchema,
-        candidate_shard_bytes: z.number().int().positive(),
-        candidate_shard_sha256: sha256Schema,
-        geometry_pack: relativeArtifactSchema,
-        geometry_bytes: z.number().int().positive(),
-        geometry_sha256: sha256Schema,
-        geometry_count: z.number().int().positive(),
-      })
-      .passthrough(),
-  ),
-});
 const dataSourceRegistrySchema = z.object({
   groups: z.array(
     z.object({
@@ -390,8 +319,6 @@ const dataSourceRegistrySchema = z.object({
 });
 type EvaluationSceneManifest = z.infer<typeof evaluationSceneManifestSchema>;
 type EvaluationSceneShard = z.infer<typeof evaluationSceneShardSchema>;
-type TrainingAppearanceManifest = z.infer<typeof trainingAppearanceManifestSchema>;
-type TrainingAppearanceShard = z.infer<typeof trainingAppearanceShardSchema>;
 type HostedCatalog = {
   families: TaskFamily[];
   details: Record<string, TaskDetail>;
@@ -424,11 +351,9 @@ let episodeIndexPromise: Promise<EpisodeRecord[]> | undefined;
 let sourcePromise: Promise<DataSourceRegistry> | undefined;
 let evaluationPromise: Promise<EvaluationCondition[]> | undefined;
 let evaluationSceneManifestPromise: Promise<EvaluationSceneManifest> | undefined;
-let trainingAppearanceManifestPromise: Promise<TrainingAppearanceManifest> | undefined;
 const shardPromises = new Map<string, Promise<HostedTaskShard>>();
 const bddlPromises = new Map<string, Promise<string>>();
 const evaluationSceneShardPromises = new Map<string, Promise<EvaluationSceneShard>>();
-const trainingAppearanceShardPromises = new Map<string, Promise<TrainingAppearanceShard>>();
 
 export class ApiError extends Error {
   constructor(
@@ -540,50 +465,6 @@ async function evaluationSceneRecord(
     geometry_pack_asset_id: resolveFrom(sceneManifestAssetId, task.geometry_pack),
     texture_base_asset_id: resolveFrom(sceneManifestAssetId, "textures/"),
   } as EvaluationSceneRecord;
-}
-
-async function trainingAppearanceRecord(replayId: string): Promise<TrainingAppearanceRecord> {
-  const [hosted, episode] = await Promise.all([manifest(), hostedEpisode(replayId)]);
-  const match = episode.manifest.scene_reconstruction?.appearance_match;
-  if (match?.status !== "matched" || !match.candidate_key)
-    throw new ApiError("This replay has no validated appearance match", 404, replayId);
-  const manifestAssetId = resolveFrom(manifestUrl, hosted.training_appearances.candidate_manifest);
-  trainingAppearanceManifestPromise ??= checkedJson<unknown>(manifestAssetId).then((value) =>
-    trainingAppearanceManifestSchema.parse(value),
-  );
-  const appearances = await trainingAppearanceManifestPromise;
-  const taskKey = episode.manifest.task_key ?? "";
-  const task = appearances.tasks[taskKey];
-  if (!task || task.task_key !== taskKey)
-    throw new ApiError("Appearance candidate task is missing", 409, taskKey);
-  let shardPromise = trainingAppearanceShardPromises.get(task.candidate_shard);
-  if (!shardPromise) {
-    const shardAssetId = resolveFrom(manifestAssetId, task.candidate_shard);
-    shardPromise = checkedGzipJson<unknown>(shardAssetId).then((value) =>
-      trainingAppearanceShardSchema.parse(value),
-    );
-    trainingAppearanceShardPromises.set(task.candidate_shard, shardPromise);
-  }
-  const shard = await shardPromise;
-  const record = shard.records[match.candidate_key];
-  if (
-    shard.task_key !== taskKey ||
-    shard.geometry_pack !== task.geometry_pack ||
-    !record ||
-    record.candidate_key !== match.candidate_key ||
-    record.base_task_key !== taskKey ||
-    record.category !== match.category ||
-    record.name !== match.candidate_name ||
-    record.variant !== match.candidate_variant ||
-    record.resolved_bddl !== match.candidate_bddl ||
-    record.resolved_bddl_sha256 !== match.candidate_bddl_sha256
-  )
-    throw new ApiError("Appearance match and candidate library disagree", 409, replayId);
-  return {
-    ...record,
-    geometry_pack_asset_id: resolveFrom(manifestAssetId, task.geometry_pack),
-    texture_base_asset_id: resolveFrom(manifestAssetId, "textures/"),
-  } as TrainingAppearanceRecord;
 }
 
 function resolveFrom(base: string, path: string): string {
@@ -1227,8 +1108,6 @@ async function dispatch(path: string): Promise<unknown> {
   if (parts[0] === "replays" && parts[1] && parts[2] === "series") return replaySeries(parts[1]);
   if (parts[0] === "replays" && parts[1] && parts[2] === "scene-series")
     return replaySceneSeries(parts[1]);
-  if (parts[0] === "replays" && parts[1] && parts[2] === "appearance")
-    return trainingAppearanceRecord(parts[1]);
   if (parts[0] === "replays" && parts[1] && parts[2] === "context")
     return replayContext(parts[1], url.searchParams);
   if (parts[0] === "replays" && parts[1]) return (await hostedEpisode(parts[1])).manifest;

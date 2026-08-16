@@ -11,7 +11,13 @@ the hosted data snapshot also contains validated, interactive initial-state
 scene reconstructions derived from that same revision.
 
 Hosted data snapshot:
-[`ekunish/libero-eda-data@e42cf01`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/e42cf0101811f5f922a0f0122e8d4890ef200180).
+[`ekunish/libero-eda-data@d0707ee`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/d0707eeceeac4680f1decd5f434160afca9b134b).
+
+Release status: v0.4.0 is withdrawn. Its video-to-candidate appearance match
+combined an inferred LIBERO-Plus candidate with motion from another Original
+LIBERO recording, so it did not represent one recorded scene. v0.3.1 restores
+the v0.3 data contract and keeps the withdrawn release artifacts only as an
+audit record.
 
 ## Workspaces
 
@@ -33,19 +39,10 @@ Hosted data snapshot:
   validated, explicitly approximate canonical 3D reconstruction: the published
   video and EEF series remain source data, while robot joints and object motion
   come from an exact Original-action match or an offline MuJoCo replay.
-  For records tagged `env` or `light`, appearance is shown only when a
-  five-frame offline comparison passes absolute-error, runner-up-margin, and
-  multi-frame consistency gates against the finite official candidate set.
-  This is an inference, not a condition ID published with the episode. Failed
-  matches use neutral geometry; camera, language, and noise tags keep the
-  explicitly approximate canonical appearance. When a validated appearance
-  match has no accepted body-motion proxy, Replay shows the official
-  candidate's initial body poses as a static scene beside the recorded EEF
-  trajectory; it does not invent robot or object motion. The v0.4 data release
-  accepts 1,002 matches, leaves 4,750 `env`/`light` records explicitly
-  unmatched, and marks the other 8,595 records not applicable. The 4,000
-  generated candidates are distinct from the balanced evaluation subset,
-  which contains 1,076 background and 1,142 light conditions.
+  The recorded video is the visual source of truth. The proxy's background,
+  textures, lighting, camera, robot pose, and object poses may differ from that
+  video; LIBERO-Plus-specific appearance and hidden scene state are not
+  recovered.
 
 PARC Track 1 and local experiment management are deliberately outside the
 scope of this public repository.
@@ -63,7 +60,7 @@ The released immutable manifest is the default. To inspect another complete
 export, copy `.env.example` to `.env.local` and replace `REVISION` with its
 40-character Hub commit before starting the app.
 
-The manifest URL must identify a complete `libero-eda-hosted/v4` export. A
+The manifest URL must identify a complete `libero-eda-hosted/v3` export. A
 missing, malformed, or count-mismatched manifest stops the application; there
 is no reduced-data fallback.
 
@@ -82,8 +79,7 @@ source task, then both inputs are sealed into hosted v2. Training-scene
 reconstruction is a separate offline stage: it groups the 1,738 Plus episodes
 without an exact Original action match into 207 unique action sequences, runs
 the official controller in the pinned simulator, and seals validated results
-into v3. Hosted v4 then adds separately validated background/light appearance
-matches without changing the recorded video or motion series:
+into v3:
 
 ```bash
 /path/to/PARC2026_pre/.venv-eda/bin/python tools/export_hosted_data.py \
@@ -122,27 +118,6 @@ PYTHONPATH=/path/to/PARC2026_pre/LIBERO:/path/to/PARC2026_pre \
 
 /path/to/PARC2026_pre/.venv-eda/bin/python tools/validate_hosted_data.py \
   /path/to/hosted-v3
-
-LIBERO_CONFIG_PATH=/path/to/PARC2026_pre/.parc/libero-eval \
-MUJOCO_GL=osmesa \
-PYTHONPATH=/path/to/PARC2026_pre/LIBERO-plus:/path/to/PARC2026_pre \
-/path/to/PARC2026_pre/.venv-eval/bin/python \
-  tools/export_training_appearance_candidates.py \
-  --source-repo /path/to/PARC2026_pre \
-  --hosted-root /path/to/hosted-v3 \
-  --output /path/to/appearance-candidates
-
-/path/to/PARC2026_pre/.venv-eda/bin/python tools/match_training_appearances.py \
-  --source-repo /path/to/PARC2026_pre \
-  --hosted-root /path/to/hosted-v3 \
-  --candidates /path/to/appearance-candidates \
-  --output /path/to/appearance-matches
-
-/path/to/PARC2026_pre/.venv-eda/bin/python tools/upgrade_hosted_data_v4.py \
-  --source-v3 /path/to/hosted-v3 \
-  --candidates /path/to/appearance-candidates \
-  --matches /path/to/appearance-matches \
-  --output /path/to/hosted-v4
 ```
 
 When v3 is published as a patch over an immutable, already validated v2 Hub

@@ -81,25 +81,8 @@ def main() -> None:
             args.repo_type,
             cache,
         )
-        if manifest.get("schema_version") != "libero-eda-hosted/v4":
-            raise RuntimeError("remote release is not hosted v4")
-        appearances = manifest.get("training_appearances")
-        if (
-            not isinstance(appearances, dict)
-            or appearances.get("schema_version")
-            != "libero-plus-training-appearance-match/v1"
-            or appearances.get("source_tasks") != 40
-            or appearances.get("candidates") != 4_000
-            or appearances.get("episodes") != 14_347
-            or not isinstance(appearances.get("statuses"), dict)
-            or sum(appearances["statuses"].values()) != 14_347
-            or appearances.get("motion_compatibility")
-            != {
-                "candidate_only_fixed_bodies": ["living_room_table_col"],
-                "static_initial_scene_episodes": 1,
-            }
-        ):
-            raise RuntimeError("remote training appearance contract is invalid")
+        if manifest.get("schema_version") != "libero-eda-hosted/v3":
+            raise RuntimeError("remote release is not hosted v3")
         integrity = manifest.get("integrity")
         if (
             not isinstance(integrity, dict)

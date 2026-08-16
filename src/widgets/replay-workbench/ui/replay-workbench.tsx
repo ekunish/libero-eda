@@ -1,7 +1,7 @@
 "use client";
 
-import { OrbitControls, useGLTF } from "@react-three/drei";
-import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { OrbitControls, PerspectiveCamera, useGLTF } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { EChartsOption, SeriesOption } from "echarts";
 import {
@@ -54,7 +54,6 @@ import {
   type ReplaySeries,
   type ReplayVideo,
   type TaskDetail,
-  type TrainingAppearanceRecord,
 } from "@/shared/api";
 import { cn, fixed, formatDuration } from "@/shared/lib/utils";
 import { Chart, chartTextColor } from "@/shared/ui/chart";
@@ -108,7 +107,6 @@ import {
 import { clampVideoTime, videoTimeForSeriesFrame } from "../model/video-time";
 import { AnimatedRainbowTrajectory } from "./animated-trajectory";
 import { ReplayNavigator } from "./replay-navigator";
-import { SourcePerspectiveCamera } from "./source-perspective-camera";
 import { TaskDefinitionInspector } from "./task-definition-inspector";
 
 const EMPTY_TASK_CUE_BODIES: TaskCueBody[] = [];
@@ -508,224 +506,6 @@ function MujocoSkybox({
   return null;
 }
 
-function appearanceTextureUrl(base: string, key: string): string {
-  const origin = globalThis.location?.origin ?? "http://127.0.0.1";
-  return new URL(`${key.slice(0, 2)}/${key}.png`, new URL(base, origin)).toString();
-}
-
-function AppearanceSkybox({ texture }: { texture: THREE.Texture | null }) {
-  const getThree = useThree((state) => state.get);
-  useEffect(() => {
-    const root = getThree().scene;
-    if (!texture) {
-      root.background = null;
-      return;
-    }
-    const cube = createMujocoCubeTexture(texture);
-    root.background = cube;
-    root.backgroundRotation.set(Math.PI / 2, 0, 0);
-    return () => {
-      if (root.background === cube) root.background = null;
-      cube.dispose();
-    };
-  }, [getThree, texture]);
-  return null;
-}
-
-const FIXED_CANDIDATE_ONLY_BODIES = new Set(["living_room_table_col"]);
-
-function MatchedAppearanceDigitalTwin({
-  record,
-  bodyNames,
-  series,
-  frame,
-  taskCueBodies,
-  taskCuesEnabled,
-  reducedMotion,
-  onReady,
-}: {
-  record: TrainingAppearanceRecord;
-  bodyNames: string[];
-  series: ReplaySeries;
-  frame: number;
-  taskCueBodies: TaskCueBody[];
-  taskCuesEnabled: boolean;
-  reducedMotion: boolean;
-  onReady: () => void;
-}) {
-  const gltf = useGLTF(record.geometry_pack_asset_id) as { scene: THREE.Group };
-  const textureKeys = useMemo(() => {
-    const values = new Set<string>();
-    for (const material of Object.values(record.snapshot.materials)) {
-      if (material.texture_key) values.add(material.texture_key);
-    }
-    const skybox = record.snapshot.render.skybox?.texture_key;
-    if (skybox) values.add(skybox);
-    return [...values].sort();
-  }, [record.snapshot.materials, record.snapshot.render.skybox?.texture_key]);
-  const textureUrls = useMemo(
-    () => textureKeys.map((key) => appearanceTextureUrl(record.texture_base_asset_id, key)),
-    [record.texture_base_asset_id, textureKeys],
-  );
-  const loadedTextures = useLoader(THREE.TextureLoader, textureUrls) as THREE.Texture[];
-  const textures = useMemo(
-    () => new Map(textureKeys.map((key, index) => [key, loadedTextures[index] as THREE.Texture])),
-    [loadedTextures, textureKeys],
-  );
-  const lightRender = useMemo<MujocoRenderContract>(
-    () => ({ ...record.snapshot.render, skybox: null }),
-    [record.snapshot.render],
-  );
-  const taskCueRoles = useMemo(
-    () => new Map(taskCueBodies.map((body) => [body.bodyName, new Set(body.roles)])),
-    [taskCueBodies],
-  );
-  const scene = useMemo(() => {
-    const geometryByKey = new Map<string, THREE.BufferGeometry>();
-    const cubeBySource = new Map<THREE.Texture, THREE.CubeTexture>();
-    const cubeTextures = new Set<THREE.CubeTexture>();
-    gltf.scene.traverse((object) => {
-      if (object instanceof THREE.Mesh && /^[0-9a-f]{64}$/.test(object.name)) {
-        if (geometryByKey.has(object.name)) {
-          throw new Error(`Appearance geometry is duplicated: ${object.name}`);
-        }
-        geometryByKey.set(object.name, object.geometry);
-      }
-    });
-    const root = new THREE.Group();
-    root.name = `Matched training appearance: ${record.candidate_key}`;
-    const bodyByName = new Map<string, THREE.Group>();
-    const cueMaterials: TaskCueMaterial[] = [];
-    const convertedMaterials = new Set<THREE.MeshPhongMaterial>();
-    const shadows = lightRender.lights.some((light) => light.active && light.cast_shadow);
-    for (const body of record.snapshot.bodies) {
-      const group = new THREE.Group();
-      group.name = body.name;
-      group.position.fromArray(body.translation);
-      group.quaternion.fromArray(body.rotation);
-      group.userData.mujocoBodyName = body.name;
-      bodyByName.set(body.name, group);
-      root.add(group);
-    }
-    const candidateBodyNames = new Set(record.snapshot.bodies.map((body) => body.name));
-    const incompatibleBody = bodyNames.length
-      ? (record.snapshot.bodies.find(
-          (body) => !bodyNames.includes(body.name) && !FIXED_CANDIDATE_ONLY_BODIES.has(body.name),
-        )?.name ?? bodyNames.find((name) => !candidateBodyNames.has(name)))
-      : undefined;
-    if (incompatibleBody) {
-      throw new Error(`Matched appearance body set differs from motion: ${incompatibleBody}`);
-    }
-    for (const geom of record.snapshot.geoms) {
-      const body = bodyByName.get(geom.body);
-      const geometry = geometryByKey.get(geom.geometry_key);
-      const classic = record.snapshot.materials[geom.material_key];
-      if (!body || !geometry || !classic) {
-        throw new Error(`Matched appearance scene reference is missing: ${geom.name}`);
-      }
-      const map = classic.texture_key ? textures.get(classic.texture_key) : null;
-      if (classic.texture_key && !map) {
-        throw new Error(`Matched appearance texture was not loaded: ${classic.texture_key}`);
-      }
-      if (map && classic.texture_type !== 1 && !geometry.getAttribute("uv")) {
-        throw new Error(`Matched appearance geometry has no baked UV: ${geom.name}`);
-      }
-      let cubeMapping: { texture: THREE.CubeTexture; scale: THREE.Vector3 } | undefined;
-      if (classic.texture_type === 1) {
-        if (!map) throw new Error(`Matched appearance cube texture is missing: ${geom.name}`);
-        let cube = cubeBySource.get(map);
-        if (!cube) {
-          cube = createMujocoCubeTexture(map);
-          cubeBySource.set(map, cube);
-          cubeTextures.add(cube);
-        }
-        cubeMapping = {
-          texture: cube,
-          scale: mujocoCubeScale(geom.geom_type, geom.geom_size, classic.texuniform),
-        };
-      }
-      const source = new THREE.MeshBasicMaterial({ name: geom.material_key, map });
-      source.userData.mujocoMaterial = structuredClone(classic);
-      const material = createMujocoPhongMaterial(source, classic, lightRender, cubeMapping);
-      source.dispose();
-      convertedMaterials.add(material);
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = geom.name;
-      mesh.position.fromArray(geom.translation);
-      mesh.quaternion.fromArray(geom.rotation);
-      mesh.castShadow = shadows;
-      mesh.receiveShadow = shadows;
-      mesh.userData.mujocoBodyName = geom.body;
-      mesh.userData.mujocoGeomType = geom.geom_type;
-      mesh.userData.mujocoGeomSize = geom.geom_size;
-      mesh.userData.mujocoReflectiveSurface = geom.reflective_surface ?? undefined;
-      addPlanarReflector(mesh);
-      const roles = taskCueRoles.get(geom.body);
-      if (roles?.size) cueMaterials.push(...createTaskCueMaterialBindings([material], roles));
-      body.add(mesh);
-    }
-    root.userData.parcBodies = bodyByName;
-    root.userData.parcTaskCueMaterials = cueMaterials;
-    root.userData.parcConvertedMaterials = convertedMaterials;
-    root.userData.parcMujocoCubeTextures = cubeTextures;
-    root.updateMatrixWorld(true);
-    return root;
-  }, [bodyNames, gltf.scene, lightRender, record, taskCueRoles, textures]);
-  useFrame(({ clock }) => {
-    const materials = scene.userData.parcTaskCueMaterials as TaskCueMaterial[];
-    const phase = taskCuePulsePhase(clock.getElapsedTime(), reducedMotion);
-    for (const binding of materials) updateTaskCueMaterial(binding, taskCuesEnabled, phase);
-  });
-  useEffect(() => {
-    if (!bodyNames.length) return;
-    const positions = series.body_positions[frame];
-    const quaternions = series.body_quaternions[frame];
-    if (!positions || !quaternions) return;
-    const bodyByName = scene.userData.parcBodies as Map<string, THREE.Group>;
-    for (const [index, name] of bodyNames.entries()) {
-      const body = bodyByName.get(name);
-      const position = positions[index];
-      const quaternion = quaternions[index];
-      if (!body || !position || !quaternion) continue;
-      body.position.fromArray(position);
-      body.quaternion.set(
-        quaternion[1] ?? 0,
-        quaternion[2] ?? 0,
-        quaternion[3] ?? 0,
-        quaternion[0] ?? 1,
-      );
-    }
-  }, [bodyNames, frame, scene, series.body_positions, series.body_quaternions]);
-  useEffect(() => onReady(), [onReady]);
-  useEffect(
-    () => () => {
-      scene.traverse((object) => {
-        if (object instanceof Reflector) {
-          const materials = Array.isArray(object.material) ? object.material : [object.material];
-          for (const material of materials) material.dispose();
-          object.getRenderTarget().dispose();
-          if (object.userData.parcOwnsGeometry) object.geometry.dispose();
-        }
-      });
-      for (const material of scene.userData.parcConvertedMaterials as Set<THREE.Material>) {
-        material.dispose();
-      }
-      for (const texture of scene.userData.parcMujocoCubeTextures as Set<THREE.CubeTexture>) {
-        texture.dispose();
-      }
-    },
-    [scene],
-  );
-  const skyboxKey = record.snapshot.render.skybox?.texture_key;
-  return (
-    <>
-      <MujocoLights render={lightRender} />
-      <AppearanceSkybox texture={skyboxKey ? (textures.get(skyboxKey) ?? null) : null} />
-      <primitive object={scene} />
-    </>
-  );
-}
-
 function DigitalTwin({
   manifest,
   series,
@@ -733,7 +513,6 @@ function DigitalTwin({
   taskCueBodies,
   taskCuesEnabled,
   reducedMotion,
-  neutralAppearance,
   onReady,
 }: {
   manifest: ReplayManifest;
@@ -742,7 +521,6 @@ function DigitalTwin({
   taskCueBodies: TaskCueBody[];
   taskCuesEnabled: boolean;
   reducedMotion: boolean;
-  neutralAppearance: boolean;
   onReady: () => void;
 }) {
   const gltf = useGLTF(mediaUrl(manifest.scene_asset_id as string)) as {
@@ -800,16 +578,6 @@ function DigitalTwin({
         }
         return createMujocoPhongMaterial(source, classic, render, cubeMapping);
       });
-      if (neutralAppearance) {
-        for (const material of converted) {
-          material.map = null;
-          material.color.set("#8b918b");
-          material.emissive.set("#000000");
-          material.specular.set("#1d211e");
-          material.shininess = 8;
-          material.needsUpdate = true;
-        }
-      }
       object.material = Array.isArray(object.material) ? converted : converted[0];
       object.castShadow = shadows;
       object.receiveShadow = shadows;
@@ -824,14 +592,7 @@ function DigitalTwin({
     clone.userData.parcMujocoCubeTextures = cubeTextures;
     clone.userData.parcTaskCueMaterials = taskCueMaterials;
     return clone;
-  }, [
-    gltf.scene,
-    manifest.body_names,
-    manifest.scene_schema,
-    neutralAppearance,
-    render,
-    taskCueRoles,
-  ]);
+  }, [gltf.scene, manifest.body_names, manifest.scene_schema, render, taskCueRoles]);
   useFrame(({ clock }) => {
     const materials = scene.userData.parcTaskCueMaterials as TaskCueMaterial[] | undefined;
     const phase = taskCuePulsePhase(clock.getElapsedTime(), reducedMotion);
@@ -886,15 +647,8 @@ function DigitalTwin({
   }, [onReady]);
   return (
     <>
-      {neutralAppearance ? (
-        <>
-          <ambientLight color="#ffffff" intensity={1.1} />
-          <directionalLight color="#ffffff" intensity={1.8} position={[2, -2, 4]} />
-        </>
-      ) : render ? (
-        <MujocoLights render={render} />
-      ) : null}
-      {!neutralAppearance && render ? <MujocoSkybox parser={gltf.parser} render={render} /> : null}
+      {render ? <MujocoLights render={render} /> : null}
+      {render ? <MujocoSkybox parser={gltf.parser} render={render} /> : null}
       <primitive object={scene} />
     </>
   );
@@ -928,7 +682,6 @@ type SceneModelLoadState = {
 
 function TrajectoryScene({
   manifest,
-  appearance,
   series,
   sceneSeries,
   frame,
@@ -943,7 +696,6 @@ function TrajectoryScene({
   onSceneError,
 }: {
   manifest: ReplayManifest;
-  appearance: TrainingAppearanceRecord | null;
   series: ReplaySeries;
   sceneSeries: ReplaySeries;
   frame: number;
@@ -974,7 +726,7 @@ function TrajectoryScene({
     const box = new THREE.Box3().setFromPoints(points);
     return box.getCenter(new THREE.Vector3());
   }, [points]);
-  const agentviewCalibration = (appearance?.snapshot.cameras ?? manifest.scene_cameras).find(
+  const agentviewCalibration = manifest.scene_cameras.find(
     (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
   );
   const cameraPose = useMemo(() => {
@@ -987,7 +739,6 @@ function TrajectoryScene({
       target: center.toArray(),
       up: [0, 0, 1] as [number, number, number],
       fov: 43,
-      imagePlaneY: "up" as const,
     };
   }, [agentviewCalibration, cameraMode, center]);
   const cameraKey = `${cameraMode}-${cameraReset}`;
@@ -1021,14 +772,13 @@ function TrajectoryScene({
         root.up.set(0, 0, 1);
       }}
     >
-      <SourcePerspectiveCamera
+      <PerspectiveCamera
         key={`camera-${cameraKey}`}
         makeDefault
         position={cameraPose.position}
         quaternion={cameraPose.quaternion}
         fov={cameraPose.fov}
         up={cameraPose.up}
-        imagePlaneY={cameraPose.imagePlaneY}
       />
       {!showTwin ? (
         <gridHelper
@@ -1037,25 +787,7 @@ function TrajectoryScene({
           position={[0, 0, 0]}
         />
       ) : null}
-      {showTwin && appearance ? (
-        <SceneModelErrorBoundary
-          key={`${appearance.candidate_key}-${sceneAttempt}`}
-          onError={onSceneError}
-        >
-          <Suspense fallback={null}>
-            <MatchedAppearanceDigitalTwin
-              record={appearance}
-              bodyNames={manifest.body_names}
-              series={sceneSeries}
-              frame={frame}
-              taskCueBodies={taskCueBodies}
-              taskCuesEnabled={taskCuesEnabled}
-              reducedMotion={reducedMotion}
-              onReady={onSceneReady}
-            />
-          </Suspense>
-        </SceneModelErrorBoundary>
-      ) : showTwin && manifest.scene_asset_id && sceneSeries.body_positions.length ? (
+      {showTwin && manifest.scene_asset_id && sceneSeries.body_positions.length ? (
         <SceneModelErrorBoundary
           key={`${manifest.scene_asset_id}-${sceneAttempt}`}
           onError={onSceneError}
@@ -1068,7 +800,6 @@ function TrajectoryScene({
               taskCueBodies={taskCueBodies}
               taskCuesEnabled={taskCuesEnabled}
               reducedMotion={reducedMotion}
-              neutralAppearance={manifest.scene_reconstruction?.appearance === "not_available"}
               onReady={onSceneReady}
             />
           </Suspense>
@@ -1468,9 +1199,9 @@ const RECONSTRUCTION_METHOD_LABELS: Record<
   NonNullable<ReplayManifest["scene_reconstruction"]>["method"],
   string
 > = {
-  original_action_match_proxy: "Matched Original demo",
-  mujoco_action_replay: "MuJoCo action replay",
-  mujoco_osc_retarget: "MuJoCo OSC retarget",
+  original_action_match_proxy: "Action-matched Original demo proxy",
+  mujoco_action_replay: "MuJoCo action-replay proxy",
+  mujoco_osc_retarget: "MuJoCo OSC-retarget proxy",
   mujoco_osc_robot_only: "OSC robot-only proxy",
   unavailable: "Unavailable",
 };
@@ -1478,15 +1209,14 @@ const RECONSTRUCTION_METHOD_LABELS: Record<
 function ReconstructionInspector({ manifest }: { manifest: ReplayManifest }) {
   const reconstruction = manifest.scene_reconstruction;
   if (!reconstruction) return null;
-  const appearanceMatch = reconstruction.appearance_match;
   const metrics = reconstruction.metrics;
   const objectMotion =
     reconstruction.object_motion === "original_successful_demo_proxy"
-      ? "Matched Original demo motion"
+      ? "Original demo motion proxy"
       : reconstruction.object_motion === "mujoco_simulated"
-        ? "Re-simulated in canonical scene"
+        ? "MuJoCo-simulated proxy"
         : reconstruction.object_motion === "static_canonical"
-          ? "Canonical initial state only"
+          ? "Static canonical proxy"
           : "Not published";
   return (
     <section className="border-b border-base-300 p-3" data-testid="reconstruction-inspector">
@@ -1494,53 +1224,35 @@ function ReconstructionInspector({ manifest }: { manifest: ReplayManifest }) {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
           3D reconstruction
         </h2>
-        <Badge tone={reconstruction.method === "unavailable" ? "neutral" : "violet"}>
-          Approximate
+        <Badge tone={reconstruction.method === "unavailable" ? "neutral" : "amber"}>
+          Not the recorded scene
         </Badge>
+      </div>
+      <div
+        role="note"
+        data-testid="reconstruction-proxy-warning"
+        className="alert alert-warning mt-3 items-start rounded-none border border-warning/35 bg-warning/10 px-3 py-2 text-xs shadow-none"
+      >
+        <div>
+          <strong className="block font-semibold">
+            Approximate proxy — not the recorded scene
+          </strong>
+          <p className="mt-1 leading-5">
+            The synchronized videos are the visual source of truth. Background, textures, lighting,
+            camera, robot pose, and object poses in this 3D proxy may differ from this training
+            record.
+          </p>
+        </div>
       </div>
       <dl className="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-xs">
         <dt className="text-base-content/45">Method</dt>
         <dd>{RECONSTRUCTION_METHOD_LABELS[reconstruction.method]}</dd>
         <dt className="text-base-content/45">Appearance</dt>
         <dd>
-          {reconstruction.appearance === "video_matched_official_candidate"
-            ? "Video-matched official candidate"
-            : reconstruction.appearance === "original_libero_canonical"
-              ? "Canonical Original LIBERO"
-              : "Neutral geometry"}
+          {reconstruction.appearance === "original_libero_canonical"
+            ? "Original LIBERO canonical proxy"
+            : "Not available"}
         </dd>
-        {appearanceMatch.status === "matched" ? (
-          <>
-            <dt className="text-base-content/45">Source path tag</dt>
-            <dd>
-              {appearanceMatch.category === "env"
-                ? "Background (env)"
-                : appearanceMatch.category === "light"
-                  ? "Lighting (light)"
-                  : appearanceMatch.category}
-            </dd>
-            <dt className="text-base-content/45">Official candidate</dt>
-            <dd className="mono">{appearanceMatch.candidate_variant}</dd>
-            <dt className="text-base-content/45">Candidate BDDL</dt>
-            <dd className="mono break-all" title={appearanceMatch.candidate_bddl ?? undefined}>
-              {appearanceMatch.candidate_bddl}
-            </dd>
-            <dt className="text-base-content/45">Frame agreement</dt>
-            <dd className="mono">
-              {appearanceMatch.frame_wins}/{appearanceMatch.frame_count}
-            </dd>
-            <dt className="text-base-content/45">Normalized error</dt>
-            <dd className="mono" title="Lower is better">
-              {appearanceMatch.best_score?.toFixed(3)}
-            </dd>
-            <dt className="text-base-content/45">Runner-up separation</dt>
-            <dd className="mono">
-              {appearanceMatch.relative_margin == null
-                ? "—"
-                : `${(appearanceMatch.relative_margin * 100).toFixed(1)}%`}
-            </dd>
-          </>
-        ) : null}
         <dt className="text-base-content/45">Object motion</dt>
         <dd>{objectMotion}</dd>
         <dt className="text-base-content/45">Source record</dt>
@@ -1570,11 +1282,9 @@ function ReconstructionInspector({ manifest }: { manifest: ReplayManifest }) {
         ) : null}
       </dl>
       <p className="mt-3 text-xs leading-5 text-base-content/60">
-        {appearanceMatch.status === "matched"
-          ? "The appearance is inferred from five source-video frames against the finite set of official LIBERO-Plus candidates. It passed the absolute score, runner-up margin, and multi-frame consistency gates; it is not an exact condition ID published with this episode."
-          : appearanceMatch.status === "unmatched"
-            ? "No official appearance candidate passed every validation gate. The viewer keeps the reconstructed geometry but uses neutral materials instead of inventing a background or lighting condition. No fallback candidate is substituted."
-            : "This record has no published exact appearance condition. The canonical Original LIBERO appearance is shown only as an approximate spatial reference."}
+        EEF trajectory data comes from this record. Robot joints and object motion are separately
+        reconstructed in an Original LIBERO canonical scene; LIBERO-Plus appearance and hidden scene
+        state are not recovered.
       </p>
       <p className="mt-2 text-xs leading-5 text-base-content/60">{reconstruction.reason}</p>
     </section>
@@ -1612,18 +1322,6 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const displayedSceneSeries = displayedManifest?.scene_series_asset_id
     ? sceneSeriesQuery.data
     : displayedSeries;
-  const appearanceMatched =
-    displayedManifest?.scene_reconstruction?.appearance_match.status === "matched";
-  const appearanceUnavailable =
-    displayedManifest?.scene_reconstruction?.appearance_match.status === "unmatched";
-  const appearanceQuery = useQuery({
-    queryKey: ["replay-training-appearance", displayedReplayId],
-    queryFn: () => api<TrainingAppearanceRecord>(`/replays/${displayedReplayId}/appearance`),
-    enabled: appearanceMatched,
-    staleTime: Infinity,
-  });
-  const displayedAppearance = appearanceMatched ? (appearanceQuery.data ?? null) : null;
-  const refetchAppearance = appearanceQuery.refetch;
   const canonicalReplayParams = useMemo(
     () =>
       workspaceReadyForRoute && displayedManifest
@@ -1668,19 +1366,12 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const [browserOpen, setBrowserOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(true);
-  const hasSceneMotion = Boolean(
+  const hasTwin = Boolean(
     displayedManifest?.scene_asset_id && displayedSceneSeries?.body_positions.length,
   );
   const hasSceneCandidate = Boolean(
-    appearanceMatched ||
-      (displayedManifest?.scene_asset_id &&
-        (displayedManifest.scene_series_asset_id || displayedSeries?.body_positions.length)),
-  );
-  const isStaticMatchedScene = Boolean(
-    appearanceMatched &&
-      !displayedManifest?.scene_asset_id &&
-      !displayedManifest?.scene_series_asset_id &&
-      displayedManifest?.scene_reconstruction?.object_motion === "not_published",
+    displayedManifest?.scene_asset_id &&
+      (displayedManifest.scene_series_asset_id || displayedSeries?.body_positions.length),
   );
   const taskDetailQuery = useQuery({
     queryKey: ["task-detail", displayedManifest?.task_key],
@@ -1694,7 +1385,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     [taskDetailQuery.data],
   );
   const taskCueResolution = useMemo<TaskCueResolution | null>(() => {
-    if (!hasSceneCandidate || (appearanceMatched && !displayedAppearance)) return null;
+    if (!hasTwin) return null;
     if (!displayedManifest?.task_key) {
       return { status: "unavailable", reason: "This replay has no task definition key" };
     }
@@ -1702,42 +1393,22 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
     if (taskDefinition.status === "unavailable") {
       return { status: "unavailable", reason: taskDefinition.reason };
     }
-    const sceneBodyNames = displayedAppearance
-      ? displayedAppearance.snapshot.bodies.map((body) => body.name)
-      : displayedManifest.body_names;
-    return resolveTaskCues(taskDefinition.definition, sceneBodyNames);
-  }, [
-    appearanceMatched,
-    displayedAppearance,
-    displayedManifest,
-    hasSceneCandidate,
-    taskDefinition,
-  ]);
+    return resolveTaskCues(taskDefinition.definition, displayedManifest.body_names);
+  }, [displayedManifest, hasTwin, taskDefinition]);
   const taskCueBodies =
     taskCueResolution?.status === "resolved" ? taskCueResolution.bodies : EMPTY_TASK_CUE_BODIES;
   const [taskCuesEnabled, setTaskCuesEnabled] = useState(true);
-  const sceneAssetId = appearanceMatched
-    ? (displayedAppearance?.geometry_pack_asset_id ?? `appearance:${displayedReplayId}`)
-    : (displayedManifest?.scene_asset_id ?? null);
+  const sceneAssetId = displayedManifest?.scene_asset_id ?? null;
   const [sceneModelLoad, setSceneModelLoad] = useState<SceneModelLoadState | null>(null);
   const currentSceneModelLoad =
     sceneAssetId && sceneModelLoad?.assetId === sceneAssetId ? sceneModelLoad : null;
   const sceneModelPhase = sceneAssetId ? (currentSceneModelLoad?.phase ?? "loading") : null;
   const sceneAttempt = currentSceneModelLoad?.attempt ?? 0;
-  const sceneLoadPending = Boolean(
-    hasSceneCandidate &&
-      (appearanceQuery.isLoading ||
-        sceneModelPhase === "loading" ||
-        (displayedManifest?.scene_series_asset_id && sceneSeriesQuery.isLoading)),
-  );
   const hasAgentviewCalibration = Boolean(
-    displayedAppearance?.snapshot.cameras.some(
-      (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
-    ) ||
-      (!displayedManifest?.scene_reconstruction &&
-        displayedManifest?.scene_cameras.some(
-          (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
-        )),
+    !displayedManifest?.scene_reconstruction &&
+      displayedManifest?.scene_cameras.some(
+        (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
+      ),
   );
   const view = selectedView ?? (hasSceneCandidate ? "scene" : "trajectory");
   const cameraMode = selectedCameraMode ?? (hasAgentviewCalibration ? "front" : "oblique");
@@ -1764,26 +1435,15 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   );
   const retrySceneModel = useCallback(() => {
     if (!sceneAssetId) return;
-    if (displayedAppearance) useGLTF.clear(displayedAppearance.geometry_pack_asset_id);
-    else if (displayedManifest?.scene_asset_id) {
-      useGLTF.clear(mediaUrl(displayedManifest.scene_asset_id));
-    }
+    useGLTF.clear(mediaUrl(sceneAssetId));
     if (displayedManifest?.scene_series_asset_id) void refetchSceneSeries();
-    if (appearanceMatched) void refetchAppearance();
     setSceneModelLoad((current) => ({
       assetId: sceneAssetId,
       phase: "loading",
       attempt: (current?.assetId === sceneAssetId ? current.attempt : 0) + 1,
       error: null,
     }));
-  }, [
-    appearanceMatched,
-    displayedAppearance,
-    displayedManifest,
-    refetchAppearance,
-    refetchSceneSeries,
-    sceneAssetId,
-  ]);
+  }, [displayedManifest?.scene_series_asset_id, refetchSceneSeries, sceneAssetId]);
   useEffect(() => {
     if (displayedManifest) configure(displayedManifest.state_count - 1, displayedManifest.fps);
     return () => usePlayback.getState().reset();
@@ -2010,14 +1670,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           <span className="ml-auto hidden items-center gap-1 text-xs text-base-content/55 2xl:flex">
             <Gauge size={12} /> EEF only
           </span>
-        ) : isStaticMatchedScene ? (
-          <span
-            className="ml-auto hidden items-center gap-1 text-xs text-base-content/55 2xl:flex"
-            data-testid="static-initial-scene-label"
-          >
-            <Layers3 size={12} /> Static initial scene
-          </span>
-        ) : !hasSceneMotion ? (
+        ) : !hasTwin ? (
           <span className="ml-auto hidden items-center gap-1 text-xs text-base-content/55 2xl:flex">
             <span aria-hidden className="loading loading-spinner loading-xs" /> Loading scene motion
           </span>
@@ -2027,7 +1680,11 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         id="spatial-view-panel"
         role="tabpanel"
         aria-labelledby={`spatial-tab-${view}`}
-        aria-busy={view === "scene" && sceneLoadPending}
+        aria-busy={
+          view === "scene" &&
+          hasSceneCandidate &&
+          (!hasTwin || sceneSeriesQuery.isLoading || sceneModelPhase === "loading")
+        }
         data-testid="spatial-viewport"
         className="relative min-h-0 flex-1 bg-[var(--bg-raised)]"
       >
@@ -2038,11 +1695,10 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         ) : (
           <TrajectoryScene
             manifest={manifest}
-            appearance={displayedAppearance}
             series={series}
             sceneSeries={sceneSeries}
             frame={frame}
-            showTwin={view === "scene" && (!appearanceMatched || appearanceQuery.isSuccess)}
+            showTwin={view === "scene"}
             cameraMode={cameraMode}
             cameraReset={cameraReset}
             sceneAttempt={sceneAttempt}
@@ -2054,9 +1710,9 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           />
         )}
         {view === "scene" &&
-        sceneLoadPending &&
+        hasSceneCandidate &&
         !sceneSeriesQuery.isError &&
-        !appearanceQuery.isError ? (
+        (!hasTwin || sceneSeriesQuery.isLoading || sceneModelPhase === "loading") ? (
           <div
             role="status"
             aria-live="polite"
@@ -2069,7 +1725,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         ) : null}
         {view === "scene" &&
         hasSceneCandidate &&
-        (sceneSeriesQuery.isError || appearanceQuery.isError || sceneModelPhase === "error") ? (
+        (sceneSeriesQuery.isError || sceneModelPhase === "error") ? (
           <div
             role="alert"
             data-testid="scene-model-error"
@@ -2082,9 +1738,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
                 title={
                   sceneSeriesQuery.error instanceof Error
                     ? sceneSeriesQuery.error.message
-                    : appearanceQuery.error instanceof Error
-                      ? appearanceQuery.error.message
-                      : currentSceneModelLoad?.error?.message
+                    : currentSceneModelLoad?.error?.message
                 }
               >
                 The trajectory is still available.
@@ -2106,9 +1760,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             disabled={!hasAgentviewCalibration || view === "projection"}
             title={
               hasAgentviewCalibration
-                ? displayedAppearance
-                  ? "Use the matched official candidate's agentview pose and vertical FOV"
-                  : `${manifest.scene_fidelity === "recording_render_matched" ? "Recorded materials and lighting; " : ""}use the recorded agentview pose and vertical FOV`
+                ? `${manifest.scene_fidelity === "recording_render_matched" ? "Recorded materials and lighting; " : ""}use the recorded agentview pose and vertical FOV`
                 : "No exact agentview calibration is available"
             }
             onClick={() => {
@@ -2132,9 +1784,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <RotateCcw size={13} /> Oblique
           </Button>
         </fieldset>
-        {view === "scene" &&
-        hasSceneCandidate &&
-        (!appearanceMatched || appearanceQuery.isSuccess) ? (
+        {view === "scene" && hasTwin ? (
           taskCueResolution?.status === "resolved" ? (
             <Button
               size="xs"
@@ -2403,33 +2053,21 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           <Badge tone={manifest.source === "dataset" ? "green" : "cyan"}>{recordingLabel}</Badge>
           <Badge
             tone={
-              appearanceMatched
-                ? "green"
-                : appearanceUnavailable
-                  ? "neutral"
-                  : hasSceneCandidate
-                    ? manifest.scene_fidelity === "recording_render_matched"
-                      ? "green"
-                      : "violet"
-                    : "neutral"
+              hasSceneCandidate
+                ? manifest.scene_fidelity === "recording_render_matched"
+                  ? "green"
+                  : "violet"
+                : "neutral"
             }
           >
             <Layers3 size={11} />
-            {appearanceMatched
-              ? appearanceQuery.isSuccess
-                ? isStaticMatchedScene
-                  ? "Video-matched initial scene"
-                  : "Video-matched appearance"
-                : "Loading video-matched appearance"
-              : appearanceUnavailable
-                ? "Neutral 3D reference"
-                : hasSceneCandidate
-                  ? manifest.scene_fidelity === "recording_render_matched"
-                    ? "MuJoCo-matched 3D"
-                    : hasSceneMotion
-                      ? "Approximate 3D"
-                      : "Loading approximate 3D"
-                  : "EEF trajectory only"}
+            {hasSceneCandidate
+              ? manifest.scene_fidelity === "recording_render_matched"
+                ? "MuJoCo-matched 3D"
+                : hasTwin
+                  ? "Approximate proxy 3D"
+                  : "Loading proxy 3D"
+              : "EEF trajectory only"}
           </Badge>
           <h1 className="truncate text-sm font-semibold" title={manifest.task_name}>
             {manifest.task_name}

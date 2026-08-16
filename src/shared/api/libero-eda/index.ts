@@ -30,7 +30,6 @@ export type {
   TaskEpisodes,
   TaskFamily,
   TaskRecord,
-  TrainingAppearanceRecord,
   TrainingEnvironmentCategories,
   TrainingInstructionAvailability,
   TrainingInstructionRelation,

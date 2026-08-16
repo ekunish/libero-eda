@@ -11,18 +11,7 @@ export type FixedCameraPose = {
   target: Vector3Tuple;
   up: Vector3Tuple;
   fov: number;
-  imagePlaneY: "up" | "down";
 };
-
-export function applyImagePlaneYConvention(
-  projection: THREE.Matrix4,
-  convention: FixedCameraPose["imagePlaneY"],
-): THREE.Matrix4 {
-  const result = projection.clone();
-  result.elements[5] =
-    convention === "down" ? -Math.abs(result.elements[5]) : Math.abs(result.elements[5]);
-  return result;
-}
 
 function vector3Tuple(vector: THREE.Vector3): Vector3Tuple {
   return [vector.x, vector.y, vector.z];
@@ -61,9 +50,5 @@ export function fixedCameraPoseFromCalibration(
     target: vector3Tuple(target),
     up: vector3Tuple(up),
     fov: calibration.vertical_fov_degrees,
-    // MuJoCo camera images use a top-left image origin. Three.js uses an
-    // upward clip-space Y axis, so the fixed-camera projection must invert Y
-    // without rolling the camera (which would also reverse left and right).
-    imagePlaneY: "down",
   };
 }

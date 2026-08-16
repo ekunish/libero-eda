@@ -38,12 +38,6 @@ following pinned sources, whose dataset cards declare MIT:
 
 Copyright and attribution remain with their respective authors and uploaders.
 
-`training-appearances/` contains content-addressed geometry and source textures
-from the pinned LIBERO-Plus simulator assets, plus LIBERO EDA match scores and
-validation metadata. Offline comparison frames and segmentation masks are not
-distributed. The exact candidate identity is inferred from the published
-training video and is not asserted as upstream episode metadata.
-
 ## LIBERO-Plus evaluation scene paths
 
 `evaluation-scenes/` contains content-addressed geometry and source textures

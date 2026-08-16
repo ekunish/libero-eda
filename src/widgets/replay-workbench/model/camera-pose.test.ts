@@ -1,7 +1,6 @@
-import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import type { ReplayManifest } from "@/shared/api";
-import { applyImagePlaneYConvention, fixedCameraPoseFromCalibration } from "./camera-pose";
+import { fixedCameraPoseFromCalibration } from "./camera-pose";
 
 type SceneCameraCalibration = ReplayManifest["scene_cameras"][number];
 
@@ -36,23 +35,6 @@ describe("fixed camera pose", () => {
     expect(expectedTarget).toEqual([1, 1, 3]);
     expect(expectedUp).toEqual([1, 0, 0]);
     expect(pose.fov).toBe(47);
-    expect(pose.imagePlaneY).toBe("down");
     expect(Math.hypot(...pose.quaternion)).toBeCloseTo(1, 12);
-  });
-
-  it("flips only the image-plane Y projection", () => {
-    const source = new THREE.Matrix4().makePerspective(-1, 1, 1, -1, 0.1, 10);
-    const corrected = applyImagePlaneYConvention(source, "down");
-
-    expect(corrected.elements[0]).toBe(source.elements[0]);
-    expect(corrected.elements[5]).toBe(-Math.abs(source.elements[5]));
-    for (const index of Array.from({ length: 16 }, (_, value) => value).filter(
-      (value) => value !== 5,
-    )) {
-      expect(corrected.elements[index]).toBe(source.elements[index]);
-    }
-    expect(applyImagePlaneYConvention(corrected, "up").elements[5]).toBe(
-      Math.abs(source.elements[5]),
-    );
   });
 });
