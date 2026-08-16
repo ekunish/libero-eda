@@ -160,7 +160,18 @@ test("Evaluation is sourced from the pinned official repository and has no Track
   const matrix = page.locator("h2:visible", { hasText: "Condition matrix" });
   if (!(await matrix.isVisible())) await page.getByRole("button", { name: "Filters" }).click();
   await expect(matrix).toBeVisible();
+  await expect(page.getByText("Background Textures", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/Track 1/)).toHaveCount(0);
+});
+
+test("Evaluation preserves the official Background Textures category and count", async ({
+  page,
+}) => {
+  await page.goto("/evaluation?category=Background%20Textures");
+  const list = page.locator('[data-testid^="evaluation-condition-list"]:visible');
+  await expect(list).toBeVisible();
+  await expect(list.locator("..").getByText("1,076", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/category=Background(%20|\+)Textures/);
 });
 
 test("Sources states exact training and evaluation provenance", async ({ page }) => {

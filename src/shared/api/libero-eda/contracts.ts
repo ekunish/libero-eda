@@ -1,3 +1,5 @@
+import type { EvaluationCategory } from "./evaluation-category";
+
 export type SourceCount = { source: string; count: number };
 export type GroupCount = { count: number; [key: string]: string | number | null };
 export type RecordingDatasetId = "original_libero" | "lerobot_libero_plus";
@@ -141,20 +143,22 @@ export type DataSourceRegistry = {
 };
 
 export type EvaluationCondition = TaskRecord & {
+  category: EvaluationCategory;
   base_task: Pick<TaskRecord, "task_key" | "suite" | "suite_id" | "name" | "instruction">;
 };
 
 export type EvaluationSummary = {
   total_conditions: number;
   source_task_count: number;
-  matrix: Array<{ category: string; difficulty: number | null; count: number }>;
+  matrix: Array<{ category: EvaluationCategory; difficulty: number | null; count: number }>;
   suites: Array<{ suite: string; count: number }>;
-  categories: string[];
+  categories: EvaluationCategory[];
   difficulty_levels: number[];
   unassigned_difficulty_count: number;
 };
 
 export type EvaluationConditionDetail = TaskDetail & {
+  category: EvaluationCategory;
   base_task: Pick<TaskRecord, "task_key" | "suite" | "suite_id" | "name" | "instruction" | "scene">;
   goal_expression: string | null;
   provenance_source: { repository: string; revision: string; task_key: string };
@@ -250,7 +254,7 @@ export type EvaluationSceneRecord = {
     suite: string;
     suite_id: number;
     name: string;
-    category: string;
+    category: EvaluationCategory;
     difficulty: number | null;
     base_task_key: string;
   };

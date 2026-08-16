@@ -18,6 +18,7 @@ import type {
   TaskFamily,
   TrainingEnvironmentCategories,
 } from "./contracts";
+import { type EvaluationCategory, evaluationCategorySchema } from "./evaluation-category";
 import { validateHostedManifestUrl } from "./manifest-url";
 
 const DEFAULT_MANIFEST_URL =
@@ -249,7 +250,7 @@ const sceneRecordSchema = z.object({
     suite: z.string().min(1),
     suite_id: z.number().int().nonnegative(),
     name: z.string().min(1),
-    category: z.string().min(1),
+    category: evaluationCategorySchema,
     difficulty: z.union([z.number().int().min(1).max(5), z.null()]),
     base_task_key: z.string().min(1),
   }),
@@ -323,10 +324,17 @@ type HostedTaskShard = {
   task_key: string;
   datasets: Record<RecordingDatasetId, HostedEpisode[]>;
 };
-type EvaluationRaw = Record<
-  string,
-  Array<{ id: number; name: string; category: string; difficulty_level: number | null }>
->;
+const evaluationRawSchema = z.record(
+  z.string().min(1),
+  z.array(
+    z.object({
+      id: z.number().int().nonnegative(),
+      name: z.string().min(1),
+      category: evaluationCategorySchema,
+      difficulty_level: z.union([z.number().int().min(1).max(5), z.null()]),
+    }),
+  ),
+);
 
 let manifestPromise: Promise<HostedManifest> | undefined;
 let catalogPromise: Promise<HostedCatalog> | undefined;
@@ -640,7 +648,9 @@ function instructionFromBddl(text: string): string {
 
 async function evaluationConditions(): Promise<EvaluationCondition[]> {
   evaluationPromise ??= Promise.all([manifest(), catalog()]).then(async ([hosted, tasks]) => {
-    const raw = await checkedJson<EvaluationRaw>(hosted.evaluation.classification_url);
+    const raw = evaluationRawSchema.parse(
+      await checkedJson<unknown>(hosted.evaluation.classification_url),
+    );
     const bases = tasks.families
       .filter((item) => item.is_plus_source)
       .sort((a, b) => b.name.length - a.name.length);
@@ -708,12 +718,15 @@ function filterEvaluation(
 }
 
 function evaluationSummary(items: EvaluationCondition[]): EvaluationSummary {
-  const cells = new Map<string, { category: string; difficulty: number | null; count: number }>();
+  const cells = new Map<
+    string,
+    { category: EvaluationCategory; difficulty: number | null; count: number }
+  >();
   const suites = new Map<string, number>();
   for (const item of items) {
     const key = `${item.category}:${item.difficulty ?? "null"}`;
     const cell = cells.get(key) ?? {
-      category: item.category ?? "",
+      category: item.category,
       difficulty: item.difficulty,
       count: 0,
     };
@@ -730,7 +743,7 @@ function evaluationSummary(items: EvaluationCondition[]): EvaluationSummary {
     suites: [...suites]
       .map(([suite, count]) => ({ suite, count }))
       .sort((a, b) => a.suite.localeCompare(b.suite)),
-    categories: [...new Set(items.map((item) => item.category ?? ""))].sort(),
+    categories: [...new Set(items.map((item) => item.category))].sort(),
     difficulty_levels: [1, 2, 3, 4, 5],
     unassigned_difficulty_count: items.filter((item) => item.difficulty == null).length,
   };

@@ -32,3 +32,9 @@ export type {
   TrainingInstructionAvailability,
   TrainingInstructionRelation,
 } from "./contracts";
+export type { EvaluationCategory } from "./evaluation-category";
+export {
+  EVALUATION_CATEGORIES,
+  evaluationCategorySchema,
+  isEvaluationCategory,
+} from "./evaluation-category";

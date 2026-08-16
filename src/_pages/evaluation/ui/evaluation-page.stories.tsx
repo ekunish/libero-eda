@@ -120,11 +120,12 @@ const condition: EvaluationCondition = {
 const summary: EvaluationSummary = {
   total_conditions: 10030,
   source_task_count: 40,
-  categories: ["Language Instructions", "Sensor Noise"],
+  categories: ["Background Textures", "Language Instructions", "Sensor Noise"],
   difficulty_levels: [1, 2, 3, 4, 5],
   unassigned_difficulty_count: 121,
   suites: [{ suite: "libero_goal", count: 2591 }],
   matrix: [
+    { category: "Background Textures", difficulty: 2, count: 180 },
     { category: "Language Instructions", difficulty: 3, count: 259 },
     { category: "Sensor Noise", difficulty: 5, count: 320 },
   ],
@@ -298,6 +299,7 @@ export const MatrixAndDetail: Story = {
     const canvas = within(canvasElement);
     await expect(await canvas.findByRole("heading", { name: "Condition matrix" })).toBeVisible();
     await expect(await canvas.findByTestId("evaluation-matrix")).toBeVisible();
+    await expect(await canvas.findByText("Background Textures", { exact: true })).toBeVisible();
     await expect(
       await canvas.findByRole("heading", {
         name: "Please make sure the middle drawer of the cabinet is open",

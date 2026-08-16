@@ -13,6 +13,7 @@ import {
   type EvaluationConditionDetail,
   type EvaluationSceneRecord,
   type EvaluationSummary,
+  isEvaluationCategory,
   type Page,
   type TaskFamily,
 } from "@/shared/api";
@@ -37,35 +38,12 @@ import {
 
 const PAGE_SIZE = 50;
 const difficultyKeys = ["1", "2", "3", "4", "5", "unassigned"] as const;
-const categoryLabels: Record<string, string> = {
-  "Background Textures": "Background",
-  "Camera Viewpoints": "Camera",
-  "Language Instructions": "Language",
-  "Light Conditions": "Lighting",
-  "Lighting Conditions": "Lighting",
-  "Objects Layout": "Objects",
-  "Object Layouts": "Objects",
-  "Robot Initial States": "Robot init",
-  "Sensor Noise": "Sensor noise",
-};
 const suiteLabels: Record<string, string> = {
   libero_spatial: "Spatial",
   libero_object: "Object",
   libero_goal: "Goal",
   libero_10: "LIBERO-10",
 };
-const allowedEvaluationCategories = new Set([
-  "Background Textures",
-  "Camera Viewpoints",
-  "Language Instructions",
-  "Light Conditions",
-  "Lighting Conditions",
-  "Objects Layout",
-  "Object Layouts",
-  "Robot Initial States",
-  "Sensor Noise",
-]);
-
 function difficultyLabel(value: number | null): string {
   return value == null ? "Unassigned" : `L${value}`;
 }
@@ -112,7 +90,7 @@ function EvaluationMatrix({
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-2">
-        <div className="grid min-w-[300px] grid-cols-[minmax(104px,1fr)_repeat(6,32px)] items-center text-xs">
+        <div className="grid min-w-[336px] grid-cols-[minmax(140px,1fr)_repeat(6,32px)] items-center text-xs">
           <span className="px-1 py-1 font-semibold text-base-content/55">Category</span>
           {difficultyKeys.map((key) => (
             <span key={key} className="py-1 text-center font-semibold text-base-content/50">
@@ -122,10 +100,10 @@ function EvaluationMatrix({
           {summary.categories.map((category) => (
             <div key={category} className="contents">
               <span
-                className="truncate border-t border-base-300 px-1 py-2 font-medium"
+                className="min-w-0 whitespace-normal border-t border-base-300 px-1 py-2 font-medium leading-4"
                 title={category}
               >
-                {categoryLabels[category] ?? category}
+                {category}
               </span>
               {difficultyKeys.map((difficulty) => {
                 const count = counts.get(`${category}:${difficulty}`) ?? 0;
@@ -136,7 +114,7 @@ function EvaluationMatrix({
                     key={difficulty}
                     disabled={!count}
                     aria-pressed={selected}
-                    aria-label={`${categoryLabels[category] ?? category}, ${difficulty === "unassigned" ? "difficulty unassigned" : `difficulty L${difficulty}`}, ${count} conditions`}
+                    aria-label={`${category}, ${difficulty === "unassigned" ? "difficulty unassigned" : `difficulty L${difficulty}`}, ${count} conditions`}
                     onClick={() => onSelect(category, difficulty)}
                     className={cn(
                       "m-0.5 grid size-7 place-items-center rounded-field border border-transparent font-mono text-[10px] transition-colors",
@@ -204,9 +182,9 @@ function ConditionList({
                 "bg-primary/8 shadow-[inset_3px_0_var(--color-primary)]",
             )}
           >
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Badge tone={item.category === "Language Instructions" ? "violet" : "cyan"}>
-                {categoryLabels[item.category ?? ""] ?? item.category}
+                {item.category}
               </Badge>
               <Badge tone={item.difficulty == null ? "amber" : "neutral"}>
                 {difficultyLabel(item.difficulty)}
@@ -296,7 +274,7 @@ function ConditionInspector({
     >
       <header className="border-b border-base-300 px-4 py-3">
         <div className="flex flex-wrap gap-1.5">
-          <Badge tone="cyan">{categoryLabels[detail.category ?? ""] ?? detail.category}</Badge>
+          <Badge tone="cyan">{detail.category}</Badge>
           <Badge tone={detail.difficulty == null ? "amber" : "neutral"}>
             {difficultyLabel(detail.difficulty)}
           </Badge>
@@ -460,7 +438,7 @@ export default function EvaluationPage() {
     const sheet = searchParams.get("sheet");
     if (sheet && sheet !== "condition") updates.sheet = null;
     if (suite !== "all" && !(suite in suiteLabels)) updates.suite = null;
-    if (category && !allowedEvaluationCategories.has(category)) updates.category = null;
+    if (category && !isEvaluationCategory(category)) updates.category = null;
     if (difficulty && !["1", "2", "3", "4", "5", "unassigned"].includes(difficulty))
       updates.difficulty = null;
     const rawOffset = searchParams.get("offset");
@@ -693,7 +671,7 @@ export default function EvaluationPage() {
               id="evaluation-layout"
               defaultLayout={{ matrix: 17, conditions: 21, scene: 38, inspector: 24 }}
             >
-              <Panel id="matrix" defaultSize="17%" minSize={246} maxSize={360}>
+              <Panel id="matrix" defaultSize="17%" minSize={268} maxSize={400}>
                 {matrix}
               </Panel>
               <Separator className="group relative w-px bg-base-300">

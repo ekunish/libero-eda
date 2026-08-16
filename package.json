@@ -1,6 +1,6 @@
 {
   "name": "libero-eda",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browser-based explorer for LIBERO and LIBERO-Plus datasets.",
   "author": "ekunish",
   "license": "Apache-2.0",
