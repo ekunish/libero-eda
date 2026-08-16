@@ -158,6 +158,118 @@ export type EvaluationConditionDetail = TaskDetail & {
   base_task: Pick<TaskRecord, "task_key" | "suite" | "suite_id" | "name" | "instruction" | "scene">;
   goal_expression: string | null;
   provenance_source: { repository: string; revision: string; task_key: string };
+  initial_scene: EvaluationInitialSceneReference;
+};
+
+export type EvaluationInitialSceneReference = {
+  schema_version: "libero-evaluation-scenes/v1";
+  condition_key: string;
+  source_task_key: string;
+  state_index: 0;
+  settle_zero_actions: 5;
+  environment_seed: 10000;
+  constructor_randomization_policy: "retry_without_reseeding";
+  constructor_attempt_limit: 100;
+  action_dimension: 7;
+  source_procedure: "LIBERO-plus/benchmark_scripts/render_single_task.py";
+};
+
+export type EvaluationSceneMaterial = {
+  rgba: [number, number, number, number];
+  emission: number;
+  specular: number;
+  shininess: number;
+  reflectance: number;
+  texuniform: boolean;
+  texture_type: 0 | 1 | null;
+  texture_repeat: [number, number];
+  texture_key: string | null;
+};
+
+export type EvaluationSceneRender = {
+  renderer: "mujoco_classic";
+  color_space: "srgb_textures_linear_lighting";
+  tone_mapping: "none";
+  headlight: {
+    active: boolean;
+    ambient: [number, number, number];
+    diffuse: [number, number, number];
+    specular: [number, number, number];
+  };
+  lights: Array<{
+    index: number;
+    name: string;
+    type: "spot" | "directional" | "point";
+    mode: "fixed_world";
+    position: [number, number, number];
+    direction: [number, number, number];
+    ambient: [number, number, number];
+    diffuse: [number, number, number];
+    specular: [number, number, number];
+    attenuation: [number, number, number];
+    cutoff_degrees: number;
+    exponent: number;
+    active: boolean;
+    cast_shadow: boolean;
+  }>;
+  shadow_map_size: number;
+  skybox: {
+    texture_key: string;
+    layout: "vertical_R_L_U_D_F_B";
+    face_size: number;
+  } | null;
+};
+
+export type EvaluationSceneSnapshot = {
+  schema_version: "libero-evaluation-scene-snapshot/v1";
+  scene_exporter_revision: "mujoco-classic-uv3";
+  bodies: Array<{
+    name: string;
+    translation: [number, number, number];
+    rotation: [number, number, number, number];
+  }>;
+  geoms: Array<{
+    name: string;
+    body: string;
+    geometry_key: string;
+    material_key: string;
+    translation: [number, number, number];
+    rotation: [number, number, number, number];
+    geom_type: number;
+    geom_size: [number, number, number];
+    reflective_surface: { kind: "plane" | "box_top"; reflectance: number } | null;
+  }>;
+  materials: Record<string, EvaluationSceneMaterial>;
+  render: EvaluationSceneRender;
+  cameras: SceneCameraCalibration[];
+};
+
+export type EvaluationSceneRecord = {
+  condition: {
+    task_key: string;
+    suite: string;
+    suite_id: number;
+    name: string;
+    category: string;
+    difficulty: number | null;
+    base_task_key: string;
+  };
+  settings: Record<string, string | number>;
+  initialization: {
+    state_index: 0;
+    settle_zero_actions: 5;
+    environment_seed: 10000;
+    control_action: [number, number, number, number, number, number, number];
+    runtime_bddl: string;
+    resolved_bddl: string;
+    resolved_bddl_sha256: string;
+    init_state: string;
+    init_state_sha256: string;
+    physical_state_key: string;
+  };
+  snapshot: EvaluationSceneSnapshot;
+  geometry_pack_asset_id: string;
+  texture_base_asset_id: string;
 };
 export type TrainingInstructionAvailability = "published" | "not_applicable";
 export type TrainingInstructionRelation =

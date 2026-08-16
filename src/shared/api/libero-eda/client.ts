@@ -5,6 +5,7 @@ import type {
   EpisodeRecord,
   EvaluationCondition,
   EvaluationConditionDetail,
+  EvaluationSceneRecord,
   EvaluationSummary,
   Page,
   RecordingDatasetId,
@@ -20,13 +21,25 @@ import type {
 import { validateHostedManifestUrl } from "./manifest-url";
 
 const DEFAULT_MANIFEST_URL =
-  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/9146d9262c43a4dc10523d0c15baa83e01a2249f/manifest.json";
+  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/cdbeebc91b28f96e8d7e4f79b0ca21094a2675ef/manifest.json";
 const manifestUrl = validateHostedManifestUrl(
   process.env.NEXT_PUBLIC_LIBERO_EDA_DATA_MANIFEST ?? DEFAULT_MANIFEST_URL,
 );
+const relativeArtifactSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !/^https?:/i.test(value) &&
+      !value.includes("?") &&
+      !value.includes("#") &&
+      !value.split("/").includes(".."),
+    "Expected a confined relative artifact path",
+  );
 
 const manifestSchema = z.object({
-  schema_version: z.literal("libero-eda-hosted/v1"),
+  schema_version: z.literal("libero-eda-hosted/v2"),
   revision: z.string().min(1),
   generated_at: z.string().min(1),
   catalog: z.object({
@@ -39,6 +52,7 @@ const manifestSchema = z.object({
     revision: z.string().regex(/^[0-9a-f]{40}$/),
     classification_url: z.string().url(),
     bddl_base_url: z.string().url(),
+    scene_manifest: relativeArtifactSchema,
   }),
   counts: z.object({
     task_families: z.literal(130),
@@ -56,6 +70,245 @@ const manifestSchema = z.object({
 });
 
 type HostedManifest = z.infer<typeof manifestSchema>;
+
+const finite = z.number().finite();
+const vector3 = z.tuple([finite, finite, finite]);
+const quaternion = z.tuple([finite, finite, finite, finite]);
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+const cameraSchema = z.object({
+  camera: z.string().min(1),
+  position: vector3,
+  rotation_matrix: z.tuple([
+    finite,
+    finite,
+    finite,
+    finite,
+    finite,
+    finite,
+    finite,
+    finite,
+    finite,
+  ]),
+  rotation_matrix_layout: z.literal("row_major"),
+  rotation_matrix_convention: z.literal("camera_local_to_world"),
+  camera_axis_convention: z.literal("mujoco_camera"),
+  vertical_fov_degrees: finite.gt(0).lt(180),
+  scope: z.literal("fixed_world"),
+  calibration_provenance: z.string().min(1),
+});
+const lightSchema = z.object({
+  index: z.number().int().nonnegative(),
+  name: z.string().min(1),
+  type: z.enum(["spot", "directional", "point"]),
+  mode: z.literal("fixed_world"),
+  position: vector3,
+  direction: vector3,
+  ambient: vector3,
+  diffuse: vector3,
+  specular: vector3,
+  attenuation: vector3,
+  cutoff_degrees: finite.min(0).max(90),
+  exponent: finite.min(0).max(128),
+  active: z.boolean(),
+  cast_shadow: z.boolean(),
+});
+const materialSchema = z.object({
+  rgba: z.tuple([finite, finite, finite, finite]),
+  emission: finite.min(0).max(1),
+  specular: finite.min(0).max(1),
+  shininess: finite.min(0).max(1),
+  reflectance: finite.min(0).max(1),
+  texuniform: z.boolean(),
+  texture_type: z.union([z.literal(0), z.literal(1), z.null()]),
+  texture_repeat: z.tuple([finite.positive(), finite.positive()]),
+  texture_key: z.union([sha256Schema, z.null()]),
+});
+const sceneSnapshotSchema = z.object({
+  schema_version: z.literal("libero-evaluation-scene-snapshot/v1"),
+  scene_exporter_revision: z.literal("mujoco-classic-uv3"),
+  bodies: z
+    .array(z.object({ name: z.string().min(1), translation: vector3, rotation: quaternion }))
+    .min(1),
+  geoms: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        body: z.string().min(1),
+        geometry_key: sha256Schema,
+        material_key: sha256Schema,
+        translation: vector3,
+        rotation: quaternion,
+        geom_type: z.number().int().min(0).max(7),
+        geom_size: vector3,
+        reflective_surface: z.union([
+          z.object({ kind: z.enum(["plane", "box_top"]), reflectance: finite.gt(0).max(1) }),
+          z.null(),
+        ]),
+      }),
+    )
+    .min(1),
+  materials: z.record(sha256Schema, materialSchema),
+  render: z.object({
+    renderer: z.literal("mujoco_classic"),
+    color_space: z.literal("srgb_textures_linear_lighting"),
+    tone_mapping: z.literal("none"),
+    headlight: z.object({
+      active: z.boolean(),
+      ambient: vector3,
+      diffuse: vector3,
+      specular: vector3,
+    }),
+    lights: z.array(lightSchema),
+    shadow_map_size: z.number().int().positive(),
+    skybox: z.union([
+      z.object({
+        texture_key: sha256Schema,
+        layout: z.literal("vertical_R_L_U_D_F_B"),
+        face_size: z.number().int().positive(),
+      }),
+      z.null(),
+    ]),
+  }),
+  cameras: z.array(cameraSchema),
+});
+const benchmarkRuntimeSourceSchema = z.union([
+  z.object({
+    variant: z.literal("upstream"),
+    sha256: z.literal("70ed74d8a05cdc0808d0347536781e4a0e3d8fec45437f06e7b570f84b94e4e9"),
+  }),
+  z.object({
+    variant: z.literal("pytorch_weights_only_compatibility"),
+    sha256: z.literal("ecabf4b7baf39d0c973d494bbd15e20cc981aa851981e66855117701b734fb41"),
+  }),
+]);
+const envRuntimeSourceSchema = z.union([
+  z.object({
+    variant: z.literal("upstream"),
+    sha256: z.literal("e91d7b7b35cc3ad2b073606c99860def6b3ac43b66eba00ef0ddb6bfd8f39c3c"),
+  }),
+  z.object({
+    variant: z.literal("numpy_float64_compatibility"),
+    sha256: z.literal("3084614bc4b1a5a6bf83773ceaae0a6d87b8e89fed304334b483ca1313efed57"),
+  }),
+]);
+const evaluationSceneManifestSchema = z.object({
+  schema_version: z.literal("libero-evaluation-scenes/v1"),
+  status: z.literal("complete"),
+  source: z.object({
+    repository: z.literal("sylvestf/LIBERO-plus"),
+    revision: z.string().regex(/^[0-9a-f]{40}$/),
+    simulator_assets: z.object({
+      repository: z.literal("Sylvest/LIBERO-plus"),
+      revision: z.literal("dd2bd61b7d9a6fef1abc52d606e983b41886a149"),
+      archive_sha256: z.literal("96764a4bfbdaea98d4411598caeab235458318fe0f549611b93d1a323027b3cf"),
+      archive_bytes: z.literal(6395849578),
+      extracted_file_count: z.literal(448799),
+      tree_hash_schema: z.literal("libero-plus-asset-tree-sha256/v1"),
+      tree_sha256: z.literal("6c4c2e638f6401304f01b2573c80af41b35b6d94838df71f6ab91f59468b7ecb"),
+    }),
+    runtime_source_files: z.object({
+      "libero/libero/benchmark/__init__.py": benchmarkRuntimeSourceSchema,
+      "libero/libero/envs/env_wrapper.py": envRuntimeSourceSchema,
+    }),
+  }),
+  initialization: z.object({
+    state_index: z.literal(0),
+    settle_zero_actions: z.literal(5),
+    environment_seed: z.literal(10000),
+    constructor_randomization_policy: z.literal("retry_without_reseeding"),
+    constructor_attempt_limit: z.literal(100),
+    action_dimension: z.literal(7),
+    source_procedure: z.literal("LIBERO-plus/benchmark_scripts/render_single_task.py"),
+  }),
+  counts: z.object({
+    source_tasks: z.literal(40),
+    conditions: z.literal(10030),
+    geometry_assets: z.number().int().positive(),
+    texture_assets: z.number().int().positive(),
+  }),
+  tasks: z.record(
+    z.string().min(1),
+    z.object({
+      task_key: z.string().min(1),
+      suite: z.string().min(1),
+      name: z.string().min(1),
+      condition_count: z.number().int().positive(),
+      condition_shard: relativeArtifactSchema,
+      condition_shard_bytes: z.number().int().positive(),
+      shard_sha256: sha256Schema,
+      geometry_pack: relativeArtifactSchema,
+      geometry_bytes: z.number().int().positive(),
+      geometry_sha256: sha256Schema,
+      geometry_count: z.number().int().positive(),
+    }),
+  ),
+});
+const sceneRecordSchema = z.object({
+  condition: z.object({
+    task_key: z.string().min(1),
+    suite: z.string().min(1),
+    suite_id: z.number().int().nonnegative(),
+    name: z.string().min(1),
+    category: z.string().min(1),
+    difficulty: z.union([z.number().int().min(1).max(5), z.null()]),
+    base_task_key: z.string().min(1),
+  }),
+  settings: z.record(z.string(), z.union([z.string(), finite])),
+  initialization: z.object({
+    state_index: z.literal(0),
+    settle_zero_actions: z.literal(5),
+    environment_seed: z.literal(10000),
+    control_action: z.tuple([finite, finite, finite, finite, finite, finite, finite]),
+    runtime_bddl: relativeArtifactSchema,
+    resolved_bddl: relativeArtifactSchema,
+    resolved_bddl_sha256: sha256Schema,
+    init_state: relativeArtifactSchema,
+    init_state_sha256: sha256Schema,
+    physical_state_key: sha256Schema,
+  }),
+  snapshot: sceneSnapshotSchema,
+});
+const evaluationSceneShardSchema = z.object({
+  schema_version: z.literal("libero-evaluation-scene-shard/v1"),
+  task_key: z.string().min(1),
+  geometry_pack: relativeArtifactSchema,
+  records: z.record(z.string().min(1), sceneRecordSchema),
+});
+const dataSourceRegistrySchema = z.object({
+  groups: z.array(
+    z.object({
+      group_id: z.enum([
+        "original_libero",
+        "libero_plus_training",
+        "libero_plus_evaluation",
+        "related_packages",
+      ]),
+      title: z.string().min(1),
+      purpose: z.string().min(1),
+      sources: z.array(
+        z.object({
+          source_id: z.string().min(1),
+          role: z.enum([
+            "task_definitions",
+            "recorded_trajectories",
+            "training_provenance",
+            "evaluation_definitions",
+            "simulator_assets",
+            "related_package",
+          ]),
+          label: z.string().min(1),
+          repository: z.string().min(1),
+          revision: z.string().min(1),
+          url: z.string().url(),
+          structure: z.array(z.string().min(1)),
+          counts: z.record(z.string().min(1), z.number().int().nonnegative()),
+        }),
+      ),
+    }),
+  ),
+});
+type EvaluationSceneManifest = z.infer<typeof evaluationSceneManifestSchema>;
+type EvaluationSceneShard = z.infer<typeof evaluationSceneShardSchema>;
 type HostedCatalog = {
   families: TaskFamily[];
   details: Record<string, TaskDetail>;
@@ -80,8 +333,10 @@ let catalogPromise: Promise<HostedCatalog> | undefined;
 let episodeIndexPromise: Promise<EpisodeRecord[]> | undefined;
 let sourcePromise: Promise<DataSourceRegistry> | undefined;
 let evaluationPromise: Promise<EvaluationCondition[]> | undefined;
+let evaluationSceneManifestPromise: Promise<EvaluationSceneManifest> | undefined;
 const shardPromises = new Map<string, Promise<HostedTaskShard>>();
 const bddlPromises = new Map<string, Promise<string>>();
+const evaluationSceneShardPromises = new Map<string, Promise<EvaluationSceneShard>>();
 
 export class ApiError extends Error {
   constructor(
@@ -115,11 +370,84 @@ async function checkedJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function checkedGzipJson<T>(url: string): Promise<T> {
+  if (!("DecompressionStream" in globalThis))
+    throw new ApiError("This browser cannot decode hosted gzip scene data", 409, url);
+  const response = await fetch(url, { headers: { Accept: "application/gzip" } });
+  if (!response.ok)
+    throw new ApiError(`Data request failed: ${response.status}`, response.status, url);
+  if (!response.body) throw new ApiError("Gzip data response has no body", 409, url);
+  const decompressed = response.body.pipeThrough(new DecompressionStream("gzip"));
+  return (await new Response(decompressed).json()) as T;
+}
+
 async function manifest(): Promise<HostedManifest> {
   manifestPromise ??= checkedJson<unknown>(manifestUrl).then((value) =>
     manifestSchema.parse(value),
   );
   return manifestPromise;
+}
+
+async function evaluationSceneManifest(): Promise<{
+  manifest: EvaluationSceneManifest;
+  assetId: string;
+}> {
+  const hosted = await manifest();
+  const assetId = resolveFrom(manifestUrl, hosted.evaluation.scene_manifest);
+  evaluationSceneManifestPromise ??= checkedJson<unknown>(assetId).then((value) => {
+    const parsed = evaluationSceneManifestSchema.parse(value);
+    const tasks = Object.values(parsed.tasks);
+    if (
+      parsed.source.revision !== hosted.evaluation.revision ||
+      tasks.length !== parsed.counts.source_tasks ||
+      tasks.reduce((total, task) => total + task.condition_count, 0) !== parsed.counts.conditions
+    ) {
+      throw new ApiError("Evaluation scene manifest identity mismatch", 409, assetId);
+    }
+    return parsed;
+  });
+  return { manifest: await evaluationSceneManifestPromise, assetId };
+}
+
+async function evaluationSceneRecord(
+  condition: EvaluationCondition,
+): Promise<EvaluationSceneRecord> {
+  const { manifest: scenes, assetId: sceneManifestAssetId } = await evaluationSceneManifest();
+  const task = scenes.tasks[condition.base_task_key ?? ""];
+  if (!task || task.task_key !== condition.base_task_key)
+    throw new ApiError(
+      "Evaluation source task has no initial-scene shard",
+      409,
+      condition.task_key,
+    );
+  let promise = evaluationSceneShardPromises.get(task.condition_shard);
+  if (!promise) {
+    const shardAssetId = resolveFrom(sceneManifestAssetId, task.condition_shard);
+    promise = checkedGzipJson<unknown>(shardAssetId).then((value) =>
+      evaluationSceneShardSchema.parse(value),
+    );
+    evaluationSceneShardPromises.set(task.condition_shard, promise);
+  }
+  const shard = await promise;
+  if (shard.task_key !== condition.base_task_key || shard.geometry_pack !== task.geometry_pack)
+    throw new ApiError("Evaluation initial-scene shard identity mismatch", 409, condition.task_key);
+  const record = shard.records[condition.task_key];
+  if (
+    !record ||
+    record.condition.task_key !== condition.task_key ||
+    record.condition.base_task_key !== condition.base_task_key ||
+    record.condition.suite !== condition.suite ||
+    record.condition.suite_id !== condition.suite_id ||
+    record.condition.name !== condition.name ||
+    record.condition.category !== condition.category ||
+    record.condition.difficulty !== condition.difficulty
+  )
+    throw new ApiError("Evaluation initial scene not found", 404, condition.task_key);
+  return {
+    ...record,
+    geometry_pack_asset_id: resolveFrom(sceneManifestAssetId, task.geometry_pack),
+    texture_base_asset_id: resolveFrom(sceneManifestAssetId, "textures/"),
+  } as EvaluationSceneRecord;
 }
 
 function resolveFrom(base: string, path: string): string {
@@ -186,7 +514,9 @@ async function episodeIndex(): Promise<EpisodeRecord[]> {
 
 async function sources(): Promise<DataSourceRegistry> {
   sourcePromise ??= manifest().then(async (value) => {
-    const result = await checkedJson<DataSourceRegistry>(await dataUrl(value.catalog.sources));
+    const result = dataSourceRegistrySchema.parse(
+      await checkedJson<unknown>(await dataUrl(value.catalog.sources)),
+    );
     if (
       result.groups.some((group) =>
         group.sources.some((source) => source.source_id.includes("track1")),
@@ -409,9 +739,16 @@ function evaluationSummary(items: EvaluationCondition[]): EvaluationSummary {
 async function evaluationDetail(taskKey: string): Promise<EvaluationConditionDetail> {
   const condition = (await evaluationConditions()).find((item) => item.task_key === taskKey);
   if (!condition) throw new ApiError("Evaluation condition not found", 404, taskKey);
-  const bddl = await bddlFor(condition);
-  const base = (await catalog()).details[condition.base_task_key ?? ""];
+  const [bddl, catalogValue, sceneValue] = await Promise.all([
+    bddlFor(condition),
+    catalog(),
+    evaluationSceneManifest(),
+  ]);
+  const base = catalogValue.details[condition.base_task_key ?? ""];
   if (!base) throw new ApiError("Evaluation source task not found", 409, taskKey);
+  const sceneTask = sceneValue.manifest.tasks[base.task_key];
+  if (!sceneTask || sceneTask.task_key !== base.task_key)
+    throw new ApiError("Evaluation source task has no initial-scene data", 409, taskKey);
   const goalMatch = bddl.match(/\(:goal\s+([\s\S]*?)\n\s*\)\s*\)\s*$/);
   const hosted = await manifest();
   return {
@@ -436,6 +773,18 @@ async function evaluationDetail(taskKey: string): Promise<EvaluationConditionDet
       repository: hosted.evaluation.repository,
       revision: hosted.evaluation.revision,
       task_key: condition.task_key,
+    },
+    initial_scene: {
+      schema_version: "libero-evaluation-scenes/v1",
+      condition_key: condition.task_key,
+      source_task_key: base.task_key,
+      state_index: 0,
+      settle_zero_actions: 5,
+      environment_seed: 10000,
+      constructor_randomization_policy: "retry_without_reseeding",
+      constructor_attempt_limit: 100,
+      action_dimension: 7,
+      source_procedure: "LIBERO-plus/benchmark_scripts/render_single_task.py",
     },
   };
 }
@@ -703,6 +1052,11 @@ async function dispatch(path: string): Promise<unknown> {
       })),
     );
     return { ...paged, items: withInstructions };
+  }
+  if (parts[0] === "evaluation" && parts[1] === "conditions" && parts[2] && parts[3] === "scene") {
+    const condition = (await evaluationConditions()).find((item) => item.task_key === parts[2]);
+    if (!condition) throw new ApiError("Evaluation condition not found", 404, parts[2]);
+    return evaluationSceneRecord(condition);
   }
   if (parts[0] === "evaluation" && parts[1] === "conditions" && parts[2])
     return evaluationDetail(parts[2]);

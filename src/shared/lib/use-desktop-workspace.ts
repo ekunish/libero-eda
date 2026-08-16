@@ -1,19 +1,17 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
-const QUERY = "(min-width: 1280px)";
-
-function subscribe(callback: () => void): () => void {
-  const media = window.matchMedia(QUERY);
-  media.addEventListener("change", callback);
-  return () => media.removeEventListener("change", callback);
-}
-
-function snapshot(): boolean {
-  return window.matchMedia(QUERY).matches;
-}
-
-export function useDesktopWorkspace(): boolean {
+export function useDesktopWorkspace(minWidth = 1280): boolean {
+  const query = `(min-width: ${minWidth}px)`;
+  const subscribe = useCallback(
+    (callback: () => void): (() => void) => {
+      const media = window.matchMedia(query);
+      media.addEventListener("change", callback);
+      return () => media.removeEventListener("change", callback);
+    },
+    [query],
+  );
+  const snapshot = useCallback(() => window.matchMedia(query).matches, [query]);
   return useSyncExternalStore(subscribe, snapshot, () => false);
 }

@@ -326,7 +326,7 @@ const reflectorShader = {
   `,
 };
 
-function addPlanarReflector(mesh: THREE.Mesh): void {
+export function addPlanarReflector(mesh: THREE.Mesh): void {
   const reflective = mesh.userData.mujocoReflectiveSurface as
     | { kind: "plane" | "box_top"; reflectance: number }
     | undefined;
@@ -403,7 +403,7 @@ function sourceLightObject(light: MujocoLight, shadowMapSize: number): THREE.Lig
   return result;
 }
 
-function MujocoLights({ render }: { render: MujocoRenderContract }) {
+export function MujocoLights({ render }: { render: MujocoRenderContract }) {
   const group = useMemo(() => {
     const root = new THREE.Group();
     root.name = "MuJoCo source lights";

@@ -36,6 +36,15 @@ following pinned sources, whose dataset cards declare MIT:
 
 Copyright and attribution remain with their respective authors and uploaders.
 
+## LIBERO-Plus evaluation scene paths
+
+`evaluation-scenes/` contains content-addressed geometry and source textures
+from `Sylvest/LIBERO-plus@dd2bd61b7d9a6fef1abc52d606e983b41886a149`, whose
+dataset card declares MIT, together with numeric scene descriptors derived by
+executing `sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`.
+The raw classification, BDDL, and init-state files are not redistributed.
+Copyright and attribution remain with the LIBERO and LIBERO-Plus authors.
+
 ## LIBERO EDA original material
 
 Original export schemas, validation metadata, and code-specific catalog
@@ -43,4 +52,5 @@ material are Copyright 2026 ekunish and licensed under Apache License 2.0.
 The license text is preserved at
 [`LICENSES/LIBERO-EDA-APACHE-2.0.txt`](LICENSES/LIBERO-EDA-APACHE-2.0.txt).
 
-No LIBERO-Plus evaluation BDDL or classification file is redistributed here.
+No LIBERO-Plus evaluation BDDL, init-state, or classification file is
+redistributed here.

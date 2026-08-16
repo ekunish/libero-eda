@@ -2,7 +2,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Database, FileDiff, Filter, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Database, Filter, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -11,6 +11,7 @@ import {
   api,
   type EvaluationCondition,
   type EvaluationConditionDetail,
+  type EvaluationSceneRecord,
   type EvaluationSummary,
   type Page,
   type TaskFamily,
@@ -26,6 +27,13 @@ import {
   Select,
   Skeleton,
 } from "@/shared/ui/primitives";
+import {
+  EvaluationSceneViewport,
+  parseTaskDefinition,
+  resolveTaskCues,
+  type TaskCueResolution,
+  TaskDefinitionInspector,
+} from "@/widgets/replay-workbench";
 
 const PAGE_SIZE = 50;
 const difficultyKeys = ["1", "2", "3", "4", "5", "unassigned"] as const;
@@ -242,7 +250,37 @@ function ConditionList({
   );
 }
 
-function ConditionDetail({ detail }: { detail: EvaluationConditionDetail | undefined }) {
+const settingLabels: Record<string, string> = {
+  category: "Category",
+  definition_variant: "Definition variant",
+  horizontal_view_degrees: "Horizontal view",
+  vertical_view_degrees: "Vertical view",
+  distance_scale: "Camera distance scale",
+  endpoint_rotation_degrees: "Endpoint rotation",
+  endpoint_vertical_degrees: "Endpoint vertical angle",
+  robot_initial_variant: "Robot initial variant",
+  sensor_noise_variant: "Sensor noise variant",
+};
+
+function settingValue(key: string, value: string | number): string {
+  if (key.endsWith("_degrees")) return `${value}°`;
+  if (key === "distance_scale") return `${value}×`;
+  if (key === "robot_initial_variant") return Number(value) ? `Panda${value}` : "Panda";
+  if (key === "sensor_noise_variant") return Number(value) ? `Variant ${value}` : "None";
+  return String(value);
+}
+
+function ConditionInspector({
+  detail,
+  scene,
+  cueResolution,
+  taskCuesEnabled,
+}: {
+  detail: EvaluationConditionDetail | undefined;
+  scene: EvaluationSceneRecord | undefined;
+  cueResolution: TaskCueResolution | null;
+  taskCuesEnabled: boolean;
+}) {
   if (!detail)
     return (
       <div className="grid h-full place-items-center text-sm text-base-content/55">
@@ -250,6 +288,7 @@ function ConditionDetail({ detail }: { detail: EvaluationConditionDetail | undef
       </div>
     );
   const languageChanged = detail.category === "Language Instructions";
+  const parsed = parseTaskDefinition(detail.bddl);
   return (
     <article
       className="h-full min-h-0 overflow-y-auto bg-base-100"
@@ -266,77 +305,109 @@ function ConditionDetail({ detail }: { detail: EvaluationConditionDetail | undef
         <p className="mono mt-1 text-xs text-base-content/45">{detail.task_key}</p>
       </header>
       <div className="divide-y divide-base-300">
-        <section className="grid gap-px bg-base-300 lg:grid-cols-2">
-          <div className="bg-base-100 p-4">
-            <h3 className="text-xs font-semibold text-base-content/55">Source task instruction</h3>
-            <p className="mt-1 text-sm leading-6">{detail.base_task.instruction}</p>
-            <p className="mono mt-1 text-xs text-base-content/45">
-              {suiteLabels[detail.base_task.suite]} #{detail.base_task.suite_id}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button size="xs" variant="ghost" className="border-base-300" asChild>
-                <Link href={`/data?task=${encodeURIComponent(detail.base_task.task_key)}`}>
-                  Original demonstrations
-                </Link>
-              </Button>
-              <Button size="xs" variant="ghost" className="border-base-300" asChild>
-                <Link
-                  href={`/data?dataset=lerobot_libero_plus&task=${encodeURIComponent(detail.base_task.task_key)}`}
-                >
-                  Plus training records
-                </Link>
-              </Button>
-            </div>
-          </div>
-          <div className="bg-base-100 p-4">
-            <h3 className="text-xs font-semibold text-base-content/55">
-              Instruction used for evaluation
-            </h3>
-            <p
-              className={cn(
-                "mt-1 text-sm leading-6",
-                languageChanged && "font-semibold text-secondary",
-              )}
-            >
-              {detail.instruction}
-            </p>
-            <p className="mt-1 text-xs leading-5 text-base-content/50">
-              {languageChanged
-                ? "This rewritten instruction is passed to the model for this Language condition."
-                : "For non-language categories, the primary change is in the environment or observation."}
-            </p>
-          </div>
-        </section>
-        <section className="px-4 py-3">
-          <h3 className="text-xs font-semibold text-base-content/55">
-            Success predicate (BDDL goal)
+        <section className="p-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+            Condition
           </h3>
-          <pre className="mono mt-2 overflow-x-auto whitespace-pre-wrap border-l-2 border-success pl-3 text-xs leading-5">
-            {detail.goal_expression ?? "Goal expression unavailable"}
-          </pre>
+          <dl className="mt-2 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-xs">
+            {(scene ? Object.entries(scene.settings) : [["category", detail.category ?? ""]]).map(
+              ([key, value]) => (
+                <div className="contents" key={key}>
+                  <dt className="text-base-content/45">{settingLabels[key] ?? key}</dt>
+                  <dd className="mono break-all">{settingValue(key, value)}</dd>
+                </div>
+              ),
+            )}
+          </dl>
+          {detail.category === "Sensor Noise" ? (
+            <p className="mt-2 text-xs leading-5 text-base-content/55">
+              Sensor noise is applied in image space during evaluation. The 3D pane shows the
+              settled simulator state and does not composite that camera-image effect.
+            </p>
+          ) : null}
+          {detail.category === "Language Instructions" ? (
+            <p className="mt-2 text-xs leading-5 text-base-content/55">
+              This condition changes the instruction passed to the policy, not the physical initial
+              state. Language variants of the same source task intentionally share the same scene.
+            </p>
+          ) : null}
         </section>
-        <details className="group px-4 py-3">
-          <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold">
-            <FileDiff size={14} /> Diff from source task
-          </summary>
-          <pre className="mono mt-3 max-h-80 overflow-auto whitespace-pre-wrap bg-base-200 p-3 text-xs leading-5">
-            {detail.bddl_diff || "No BDDL text diff"}
-          </pre>
-        </details>
-        <details className="group px-4 py-3">
-          <summary className="cursor-pointer text-sm font-semibold">Full evaluation BDDL</summary>
-          <pre className="mono mt-3 max-h-80 overflow-auto whitespace-pre-wrap bg-base-200 p-3 text-xs leading-5">
-            {detail.bddl}
-          </pre>
-        </details>
-        <section className="px-4 py-3 text-xs leading-5 text-base-content/60">
+        <section className="p-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+            Instruction
+          </h3>
+          <p
+            className={cn(
+              "mt-2 text-sm leading-6",
+              languageChanged && "font-semibold text-secondary",
+            )}
+          >
+            {detail.instruction}
+          </p>
+          {languageChanged ? (
+            <div className="mt-2 border-l-2 border-secondary pl-2 text-xs leading-5 text-base-content/60">
+              <p className="font-medium text-base-content">Source task</p>
+              <p>{detail.base_task.instruction}</p>
+            </div>
+          ) : null}
+        </section>
+        <TaskDefinitionInspector
+          detail={detail}
+          parsed={parsed}
+          cueResolution={cueResolution}
+          sourceTask={false}
+          taskCuesEnabled={taskCuesEnabled}
+        />
+        <section className="p-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+            Official initial state
+          </h3>
+          <p className="mt-2 text-xs leading-5 text-base-content/65">
+            Official state index 0, followed by five zero actions. Environment construction and
+            reset are fixed to LIBERO&apos;s default seed 10,000 so every published scene is
+            reproducible. Objects and joints are read-only in this EDA; the viewpoint remains fully
+            interactive.
+          </p>
+          {scene ? (
+            <dl className="mt-2 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-2 gap-y-1 text-[11px]">
+              <dt className="text-base-content/45">Init file</dt>
+              <dd className="mono break-all">{scene.initialization.init_state}</dd>
+              <dt className="text-base-content/45">BDDL</dt>
+              <dd className="mono break-all">{scene.initialization.resolved_bddl}</dd>
+              <dt className="text-base-content/45">Env seed</dt>
+              <dd className="mono">{scene.initialization.environment_seed.toLocaleString()}</dd>
+              <dt className="text-base-content/45">Bodies</dt>
+              <dd className="mono">{scene.snapshot.bodies.length}</dd>
+              <dt className="text-base-content/45">Visual geoms</dt>
+              <dd className="mono">{scene.snapshot.geoms.length}</dd>
+            </dl>
+          ) : (
+            <Skeleton className="mt-2 h-16" />
+          )}
+        </section>
+        <section className="p-3 text-xs leading-5 text-base-content/60">
+          <div className="flex flex-wrap gap-2 pb-3">
+            <Button size="xs" variant="ghost" className="border-base-300" asChild>
+              <Link href={`/data?task=${encodeURIComponent(detail.base_task.task_key)}`}>
+                Original demonstrations
+              </Link>
+            </Button>
+            <Button size="xs" variant="ghost" className="border-base-300" asChild>
+              <Link
+                href={`/data?dataset=lerobot_libero_plus&task=${encodeURIComponent(detail.base_task.task_key)}`}
+              >
+                Plus training records
+              </Link>
+            </Button>
+          </div>
           <p>
             <strong className="text-base-content">Source:</strong>{" "}
             {detail.provenance_source.repository}@{detail.provenance_source.revision.slice(0, 12)}
           </p>
           <p className="mt-1">
-            Evaluation definitions do not include official videos or successful trajectories. A
-            policy is executed in this simulator condition and evaluated against the BDDL goal.
+            The interactive scene reconstructs the official simulator&apos;s initial state; it is
+            not an evaluation video or a successful trajectory. Three.js and MuJoCo are different
+            renderers, so this view is not claimed to be pixel-identical.
           </p>
         </section>
       </div>
@@ -357,8 +428,9 @@ export default function EvaluationPage() {
   const [draft, setDraft] = useState(query);
   const [searchFocused, setSearchFocused] = useState(false);
   const mobileOpen = searchParams.get("sheet") === "condition";
-  const desktopWorkspace = useDesktopWorkspace();
+  const desktopWorkspace = useDesktopWorkspace(1536);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [taskCuesEnabled, setTaskCuesEnabled] = useState(true);
   const setParams = useCallback(
     (updates: Record<string, string | null>) => {
       const next = new URLSearchParams(searchParams.toString());
@@ -425,6 +497,9 @@ export default function EvaluationPage() {
       setParams({ offset: canonicalOffset ? String(canonicalOffset) : null, condition: null });
   }, [conditions.data, conditions.isSuccess, offset, setParams]);
   const effectiveCondition = selectedCondition ?? conditions.data?.items[0]?.task_key ?? null;
+  const visibleCondition = conditions.data?.items.find(
+    (item) => item.task_key === effectiveCondition,
+  );
   useEffect(() => {
     if (conditions.data && effectiveCondition && !selectedCondition)
       setParams({ condition: effectiveCondition });
@@ -437,6 +512,30 @@ export default function EvaluationPage() {
       ),
     enabled: Boolean(effectiveCondition),
   });
+  const scene = useQuery({
+    queryKey: ["evaluation-condition-scene", effectiveCondition],
+    queryFn: () =>
+      api<EvaluationSceneRecord>(
+        `/evaluation/conditions/${encodeURIComponent(effectiveCondition ?? "")}/scene`,
+      ),
+    enabled: Boolean(effectiveCondition),
+    placeholderData: (previous) =>
+      previous?.condition.base_task_key ===
+      (visibleCondition?.base_task_key ?? detail.data?.base_task_key)
+        ? previous
+        : undefined,
+  });
+  const parsedDefinition = useMemo(
+    () => (detail.data ? parseTaskDefinition(detail.data.bddl) : null),
+    [detail.data],
+  );
+  const cueResolution = useMemo(() => {
+    if (parsedDefinition?.status !== "parsed" || !scene.data) return null;
+    return resolveTaskCues(
+      parsedDefinition.definition,
+      scene.data.snapshot.bodies.map((body) => body.name),
+    );
+  }, [parsedDefinition, scene.data]);
   useEffect(() => {
     const selected = detail.data;
     if (!selected || !selectedCondition) return;
@@ -488,6 +587,31 @@ export default function EvaluationPage() {
       testId="evaluation-condition-list-desktop"
       onSelect={(key) => setParams({ condition: key })}
       onPage={(value) => setParams({ offset: value ? String(value) : null, condition: null })}
+    />
+  );
+  const scenePane = scene.isError ? (
+    <div className="grid h-full place-items-center p-4">
+      <ErrorPanel title="Unable to load the official initial scene" error={scene.error} />
+    </div>
+  ) : scene.data ? (
+    <EvaluationSceneViewport
+      record={scene.data}
+      taskCueBodies={cueResolution?.status === "resolved" ? cueResolution.bodies : []}
+      taskCuesEnabled={taskCuesEnabled}
+      onTaskCuesEnabledChange={setTaskCuesEnabled}
+      updating={scene.isFetching}
+    />
+  ) : (
+    <div className="h-full bg-[#111411] p-4">
+      <Skeleton className="size-full bg-white/8" />
+    </div>
+  );
+  const inspector = (
+    <ConditionInspector
+      detail={detail.data}
+      scene={scene.data}
+      cueResolution={cueResolution}
+      taskCuesEnabled={taskCuesEnabled}
     />
   );
   return (
@@ -549,7 +673,7 @@ export default function EvaluationPage() {
         <Button
           size="sm"
           variant="secondary"
-          className="xl:hidden"
+          className="2xl:hidden"
           onClick={() => setFiltersOpen(true)}
         >
           <Filter size={14} /> Filters
@@ -561,31 +685,37 @@ export default function EvaluationPage() {
         </Button>
       </header>
       <section className="min-h-0 flex-1 overflow-hidden border border-base-300 bg-base-100">
-        <div className="hidden h-full min-h-0 xl:block">
+        <div className="hidden h-full min-h-0 2xl:block">
           <Group
             orientation="horizontal"
             className="h-full min-h-0"
             id="evaluation-layout"
-            defaultLayout={{ matrix: 22, conditions: 29, detail: 49 }}
+            defaultLayout={{ matrix: 17, conditions: 21, scene: 38, inspector: 24 }}
           >
-            <Panel id="matrix" defaultSize="22%" minSize={300} maxSize={390}>
+            <Panel id="matrix" defaultSize="17%" minSize={246} maxSize={360}>
               {matrix}
             </Panel>
             <Separator className="group relative w-px bg-base-300">
               <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
             </Separator>
-            <Panel id="conditions" defaultSize="29%" minSize={390} maxSize={620}>
+            <Panel id="conditions" defaultSize="21%" minSize={286} maxSize={510}>
               {list}
             </Panel>
             <Separator className="group relative w-px bg-base-300">
               <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
             </Separator>
-            <Panel id="detail" defaultSize="49%" minSize={520}>
-              <ConditionDetail detail={detail.data} />
+            <Panel id="scene" defaultSize="38%" minSize={440}>
+              {scenePane}
+            </Panel>
+            <Separator className="group relative w-px bg-base-300">
+              <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
+            </Separator>
+            <Panel id="inspector" defaultSize="24%" minSize={290} maxSize={520}>
+              {inspector}
             </Panel>
           </Group>
         </div>
-        <div className="h-full xl:hidden">
+        <div className="h-full 2xl:hidden">
           <ConditionList
             page={conditions.data}
             selected={effectiveCondition}
@@ -599,8 +729,8 @@ export default function EvaluationPage() {
       </section>
       <Dialog.Root open={filtersOpen} onOpenChange={setFiltersOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 xl:hidden" />
-          <Dialog.Content className="fixed inset-y-0 left-0 z-[71] w-[min(25rem,calc(100vw-1rem))] overflow-hidden border-r border-base-300 bg-base-100 xl:hidden">
+          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 2xl:hidden" />
+          <Dialog.Content className="fixed inset-y-0 left-0 z-[71] w-[min(25rem,calc(100vw-1rem))] overflow-hidden border-r border-base-300 bg-base-100 2xl:hidden">
             <Dialog.Title className="sr-only">Evaluation filters</Dialog.Title>
             <Dialog.Description className="sr-only">
               Filter by category and difficulty
@@ -625,8 +755,8 @@ export default function EvaluationPage() {
         }}
       >
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 xl:hidden" />
-          <Dialog.Content className="fixed inset-x-0 bottom-0 z-[71] h-[92dvh] overflow-hidden rounded-t-xl border border-base-300 bg-base-100 xl:hidden">
+          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 2xl:hidden" />
+          <Dialog.Content className="fixed inset-x-0 bottom-0 z-[71] h-[94dvh] overflow-hidden rounded-t-xl border border-base-300 bg-base-100 2xl:hidden">
             <Dialog.Title className="sr-only">Evaluation condition details</Dialog.Title>
             <Dialog.Description className="sr-only">
               Source-task diff and success predicate
@@ -640,7 +770,12 @@ export default function EvaluationPage() {
                 <X size={16} />
               </IconButton>
             </Dialog.Close>
-            <ConditionDetail detail={detail.data} />
+            <div className="grid size-full min-h-0 grid-rows-[minmax(18rem,48%)_minmax(0,1fr)] pt-11 lg:grid-cols-[minmax(0,3fr)_minmax(22rem,2fr)] lg:grid-rows-1 lg:pt-0">
+              <div className="min-h-0 border-b border-base-300 lg:border-b-0 lg:border-r">
+                {scenePane}
+              </div>
+              <div className="min-h-0">{inspector}</div>
+            </div>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

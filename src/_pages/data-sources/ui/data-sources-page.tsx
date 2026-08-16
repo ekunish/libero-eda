@@ -36,6 +36,7 @@ const countLabels: Record<string, string> = {
   stored_bytes: "Distributed size",
   local_derived_bytes: "Local derivative",
   archive_bytes: "Archive size",
+  extracted_files: "Extracted files",
 };
 const groupCopy: Record<
   DataSourceRegistry["groups"][number]["group_id"],
@@ -71,7 +72,7 @@ function UsageLinks({ source }: { source: DataSourceRecord }) {
   const recorded = ["task_definitions", "recorded_trajectories", "training_provenance"].includes(
     source.role,
   );
-  const evaluation = source.role === "evaluation_definitions";
+  const evaluation = ["evaluation_definitions", "simulator_assets"].includes(source.role);
   return (
     <div className="flex flex-wrap gap-2">
       {recorded ? (
@@ -100,13 +101,12 @@ function SourceDetail({ source }: { source: DataSourceRecord }) {
     source.role === "related_package"
       ? "Not loaded by this release"
       : source.role === "simulator_assets"
-        ? "Source reference only"
+        ? "Evaluation scene source"
         : source.role === "evaluation_definitions"
           ? "Evaluation workspace"
           : "Recorded Data workspace";
-  const indexed = ["related_package", "simulator_assets"].includes(source.role)
-    ? "Source registry entry"
-    : "Validated hosted index";
+  const indexed =
+    source.role === "related_package" ? "Source registry entry" : "Validated hosted index";
   return (
     <article className="h-full min-h-0 overflow-y-auto bg-base-100">
       <header className="border-b border-base-300 px-5 py-4">

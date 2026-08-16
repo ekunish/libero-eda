@@ -10,8 +10,8 @@ assets loaded by the application.
 | Original LIBERO demonstrations and derived replay media | `yifengzhu-hf/LIBERO-datasets@f13aa24…` | Distributed in the data repository under CC BY 4.0 attribution requirements recorded by the source manifest. |
 | LIBERO-Plus training trajectories | `Sylvest/libero_plus_lerobot@22c5743…`, validated against `lerobot/libero_plus@f3f49f4…` | Loaded from the pinned upstream dataset; the source card declares MIT. |
 | LIBERO-Plus RLDS provenance | `Sylvest/libero_plus_rlds@fb0c702…` | Metadata-derived labels only; the source card declares MIT. |
-| LIBERO-Plus evaluation definitions | `sylvestf/LIBERO-plus@4976dc3…` | Fetched directly at runtime. They are not copied into this repository or the hosted data repository because the GitHub source does not publish a repository license. |
-| LIBERO-Plus simulator assets | `Sylvest/LIBERO-plus` | Not redistributed by this code repository; the dataset card declares MIT. |
+| LIBERO-Plus evaluation definitions | `sylvestf/LIBERO-plus@4976dc3…` | BDDL and classification text are fetched directly at runtime. They are not copied into this code repository or the hosted data repository because the GitHub source does not publish a repository license. The hosted snapshot contains only derived numeric initial-state scene descriptors and source paths/hashes. |
+| LIBERO-Plus simulator assets | `Sylvest/LIBERO-plus@dd2bd61…` | Content-addressed geometry and source textures used by the interactive initial-state viewer are distributed by the separate data repository; the pinned dataset card declares MIT. |
 
 Exact URLs, revisions, counts, and consumed structures are exposed in the
 application's **Sources** workspace.

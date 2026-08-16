@@ -637,7 +637,7 @@ def write_series(
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with temporary.open("wb") as raw:
         with gzip.GzipFile(
-            fileobj=raw, mode="wb", compresslevel=6, mtime=0
+            filename="", fileobj=raw, mode="wb", compresslevel=6, mtime=0
         ) as compressed:
             with ipc.new_file(compressed, table.schema) as writer:
                 writer.write_table(table)

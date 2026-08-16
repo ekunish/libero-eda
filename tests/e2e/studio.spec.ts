@@ -130,6 +130,7 @@ test("Recorded Data loads both public trajectory datasets", async ({ page }) => 
 test("Evaluation is sourced from the pinned official repository and has no Track 1 mode", async ({
   page,
 }) => {
+  test.setTimeout(150_000);
   await page.goto("/evaluation?condition=plus%3Alibero_goal%3A1099&sheet=condition");
   await expect(
     page.getByRole("heading", {
@@ -139,6 +140,18 @@ test("Evaluation is sourced from the pinned official repository and has no Track
   await expect(
     page.locator('[data-testid="evaluation-condition-detail"]:visible').getByText("L3").first(),
   ).toBeVisible();
+  const evaluationScene = page.getByTestId("evaluation-scene-viewport");
+  await expect(evaluationScene).toBeVisible();
+  await expect(evaluationScene).toHaveAttribute("data-scene-state", "ready", { timeout: 120_000 });
+  await expect(page.getByRole("img", { name: /Interactive initial 3D scene/ })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(
+    page
+      .locator('[data-testid="evaluation-condition-detail"]:visible')
+      .getByText("Official state index 0", { exact: false }),
+  ).toBeVisible();
+  await expect(page.locator('[data-testid="task-definition-inspector"]:visible')).toBeVisible();
   const closeDetails = page.getByRole("button", { name: "Close condition details" });
   if (await closeDetails.isVisible()) {
     await closeDetails.click();
@@ -196,7 +209,9 @@ test("Replay loads hosted series, media, and the task navigator", async ({ page 
 });
 
 test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", async ({ page }) => {
-  await page.goto("/replay/?replay_id=demo-99&replay_scope=task");
+  // demo-128 carried a non-zero chunk-global interval in hosted v1. Hosted v2
+  // must normalize the public per-episode MP4 to a zero-based 18.35 s interval.
+  await page.goto("/replay/?replay_id=demo-128&replay_scope=task");
   await expect(
     page.getByTestId("replay-command-bar").getByText("LIBERO-Plus training record"),
   ).toBeVisible();
@@ -213,7 +228,7 @@ test("LIBERO-Plus replay starts at episode frame zero and stays synchronized", a
     .toBeGreaterThan(0);
   await expect
     .poll(() => front.evaluate((video: HTMLVideoElement) => video.duration))
-    .toBeCloseTo(5.65, 2);
+    .toBeCloseTo(18.35, 2);
   await expect
     .poll(() => front.evaluate((video: HTMLVideoElement) => video.currentTime))
     .toBeLessThan(0.1);

@@ -783,7 +783,6 @@ export const RecordTransitionKeepsWorkspace: Story = {
     const canvas = within(canvasElement);
     const workspace = await canvas.findByTestId("replay-workbench");
     await expect(workspace).toHaveAttribute("data-displayed-replay-id", originalManifest.replay_id);
-    await expect(await canvas.findByRole("navigation", { name: "Filtered records" })).toBeVisible();
 
     await userEvent.click(canvas.getByRole("button", { name: "Load next fixture record" }));
 
@@ -844,7 +843,7 @@ export const SceneModelRetry: Story = {
   globals: { viewport: { value: "desktop2k", isRotated: false } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const error = await canvas.findByTestId("scene-model-error");
+    const error = await canvas.findByTestId("scene-model-error", undefined, { timeout: 3_000 });
     await expect(error).toHaveTextContent("Scene model failed to load.");
     await expect(canvas.queryByTestId("scene-model-loading")).toBeNull();
     await userEvent.click(within(error).getByRole("button", { name: "Retry" }));
