@@ -685,49 +685,54 @@ export default function EvaluationPage() {
         </Button>
       </header>
       <section className="min-h-0 flex-1 overflow-hidden border border-base-300 bg-base-100">
-        <div className="hidden h-full min-h-0 2xl:block">
-          <Group
-            orientation="horizontal"
-            className="h-full min-h-0"
-            id="evaluation-layout"
-            defaultLayout={{ matrix: 17, conditions: 21, scene: 38, inspector: 24 }}
-          >
-            <Panel id="matrix" defaultSize="17%" minSize={246} maxSize={360}>
-              {matrix}
-            </Panel>
-            <Separator className="group relative w-px bg-base-300">
-              <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
-            </Separator>
-            <Panel id="conditions" defaultSize="21%" minSize={286} maxSize={510}>
-              {list}
-            </Panel>
-            <Separator className="group relative w-px bg-base-300">
-              <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
-            </Separator>
-            <Panel id="scene" defaultSize="38%" minSize={440}>
-              {scenePane}
-            </Panel>
-            <Separator className="group relative w-px bg-base-300">
-              <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
-            </Separator>
-            <Panel id="inspector" defaultSize="24%" minSize={290} maxSize={520}>
-              {inspector}
-            </Panel>
-          </Group>
-        </div>
-        <div className="h-full 2xl:hidden">
-          <ConditionList
-            page={conditions.data}
-            selected={effectiveCondition}
-            testId="evaluation-condition-list-mobile"
-            onSelect={(key) => {
-              setParams({ condition: key, sheet: "condition" });
-            }}
-            onPage={(value) => setParams({ offset: value ? String(value) : null, condition: null })}
-          />
-        </div>
+        {desktopWorkspace ? (
+          <div className="h-full min-h-0">
+            <Group
+              orientation="horizontal"
+              className="h-full min-h-0"
+              id="evaluation-layout"
+              defaultLayout={{ matrix: 17, conditions: 21, scene: 38, inspector: 24 }}
+            >
+              <Panel id="matrix" defaultSize="17%" minSize={246} maxSize={360}>
+                {matrix}
+              </Panel>
+              <Separator className="group relative w-px bg-base-300">
+                <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
+              </Separator>
+              <Panel id="conditions" defaultSize="21%" minSize={286} maxSize={510}>
+                {list}
+              </Panel>
+              <Separator className="group relative w-px bg-base-300">
+                <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
+              </Separator>
+              <Panel id="scene" defaultSize="38%" minSize={440}>
+                {scenePane}
+              </Panel>
+              <Separator className="group relative w-px bg-base-300">
+                <span className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize group-hover:bg-primary/10" />
+              </Separator>
+              <Panel id="inspector" defaultSize="24%" minSize={290} maxSize={520}>
+                {inspector}
+              </Panel>
+            </Group>
+          </div>
+        ) : (
+          <div className="h-full">
+            <ConditionList
+              page={conditions.data}
+              selected={effectiveCondition}
+              testId="evaluation-condition-list-mobile"
+              onSelect={(key) => {
+                setParams({ condition: key, sheet: "condition" });
+              }}
+              onPage={(value) =>
+                setParams({ offset: value ? String(value) : null, condition: null })
+              }
+            />
+          </div>
+        )}
       </section>
-      <Dialog.Root open={filtersOpen} onOpenChange={setFiltersOpen}>
+      <Dialog.Root open={!desktopWorkspace && filtersOpen} onOpenChange={setFiltersOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/45 2xl:hidden" />
           <Dialog.Content className="fixed inset-y-0 left-0 z-[71] w-[min(25rem,calc(100vw-1rem))] overflow-hidden border-r border-base-300 bg-base-100 2xl:hidden">
