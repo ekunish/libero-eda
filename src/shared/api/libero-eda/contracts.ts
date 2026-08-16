@@ -380,6 +380,7 @@ export type ReplayManifest = {
   action_count: number;
   action_horizon: number | null;
   series_asset_id: string;
+  scene_series_asset_id: string | null;
   videos: ReplayVideo[];
   scene_asset_id: string | null;
   scene_hash: string | null;
@@ -388,8 +389,38 @@ export type ReplayManifest = {
   scene_fidelity_reason: string;
   body_names: string[];
   scene_cameras: SceneCameraCalibration[];
+  scene_reconstruction: SceneReconstruction | null;
   outcome: Record<string, boolean>;
   provenance: Record<string, unknown>;
+};
+
+export type SceneReconstructionMethod =
+  | "original_action_match_proxy"
+  | "mujoco_action_replay"
+  | "mujoco_osc_retarget"
+  | "mujoco_osc_robot_only"
+  | "unavailable";
+
+export type SceneReconstruction = {
+  schema_version: "libero-plus-training-scene-proxy/v1";
+  reconstruction_id: string;
+  method: SceneReconstructionMethod;
+  source_replay_id: string;
+  source_action_sha256: string;
+  appearance: "original_libero_canonical" | "not_available";
+  object_motion:
+    | "original_successful_demo_proxy"
+    | "mujoco_simulated"
+    | "static_canonical"
+    | "not_published";
+  goal_success: boolean | null;
+  metrics: {
+    position_rmse_m: number;
+    position_max_m: number;
+    orientation_rmse_rad: number;
+    gripper_mae: number;
+  } | null;
+  reason: string;
 };
 
 export type ReplayContextScope = {

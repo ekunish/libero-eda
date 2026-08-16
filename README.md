@@ -11,7 +11,7 @@ the hosted data snapshot also contains validated, interactive initial-state
 scene reconstructions derived from that same revision.
 
 Hosted data snapshot:
-[`ekunish/libero-eda-data@cdbeebc`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/cdbeebc91b28f96e8d7e4f79b0ca21094a2675ef).
+[`ekunish/libero-eda-data@d0707ee`](https://huggingface.co/datasets/ekunish/libero-eda-data/tree/d0707eeceeac4680f1decd5f434160afca9b134b).
 
 ## Workspaces
 
@@ -29,7 +29,11 @@ Hosted data snapshot:
 - **Replay** — synchronized front/wrist video, 3D scene when available, and
   trajectory/action plots. Original video keeps its recorded orientation;
   LIBERO-Plus declares its published 180-degree convention and is shown in raw
-  simulator orientation by default.
+  simulator orientation by default. LIBERO-Plus training records also expose a
+  validated, explicitly approximate canonical 3D reconstruction: the published
+  video and EEF series remain source data, while robot joints and object motion
+  come from an exact Original-action match or an offline MuJoCo replay.
+  LIBERO-Plus-specific texture, light, and camera parameters are not inferred.
 
 PARC Track 1 and local experiment management are deliberately outside the
 scope of this public repository.
@@ -47,7 +51,7 @@ The released immutable manifest is the default. To inspect another complete
 export, copy `.env.example` to `.env.local` and replace `REVISION` with its
 40-character Hub commit before starting the app.
 
-The manifest URL must identify a complete `libero-eda-hosted/v2` export. A
+The manifest URL must identify a complete `libero-eda-hosted/v3` export. A
 missing, malformed, or count-mismatched manifest stops the application; there
 is no reduced-data fallback.
 
@@ -62,7 +66,11 @@ pnpm build
 
 The migration exporter is a fail-closed bridge from the original validated EDA
 catalog. Evaluation scenes are exported separately so they can be resumed by
-source task, then both inputs are sealed into hosted v2:
+source task, then both inputs are sealed into hosted v2. Training-scene
+reconstruction is a separate offline stage: it groups the 1,738 Plus episodes
+without an exact Original action match into 207 unique action sequences, runs
+the official controller in the pinned simulator, and seals validated results
+into v3:
 
 ```bash
 /path/to/PARC2026_pre/.venv-eda/bin/python tools/export_hosted_data.py \
@@ -82,9 +90,33 @@ PYTHONPATH=/path/to/PARC2026_pre/LIBERO-plus:/path/to/PARC2026_pre \
   --evaluation-scenes /path/to/evaluation-scenes \
   --output /path/to/hosted-v2
 
+/path/to/PARC2026_pre/.venv-eda/bin/python tools/prepare_training_reconstructions.py \
+  --source-repo /path/to/PARC2026_pre \
+  --output /path/to/reconstruction-input
+
+LIBERO_CONFIG_PATH=/path/to/PARC2026_pre/.parc/libero-original-eda \
+MUJOCO_GL=egl \
+PYTHONPATH=/path/to/PARC2026_pre/LIBERO:/path/to/PARC2026_pre \
+/path/to/PARC2026_pre/.venv-eval/bin/python tools/simulate_training_reconstructions.py \
+  --source-repo /path/to/PARC2026_pre \
+  --input /path/to/reconstruction-input \
+  --output /path/to/reconstructions
+
+/path/to/PARC2026_pre/.venv-eda/bin/python tools/upgrade_hosted_data_v3.py \
+  --source-v2 /path/to/hosted-v2 \
+  --reconstructions /path/to/reconstructions \
+  --output /path/to/hosted-v3
+
 /path/to/PARC2026_pre/.venv-eda/bin/python tools/validate_hosted_data.py \
-  /path/to/hosted-v2
+  /path/to/hosted-v3
 ```
+
+When v3 is published as a patch over an immutable, already validated v2 Hub
+commit, `upgrade_hosted_data_v3.py --sparse-source` validates the complete v2
+integrity index and stages only changed files. After upload,
+`tools/validate_hosted_remote.py` checks all indexed remote sizes and SHA-256
+values at the final 40-character Hub commit, including inherited LFS/Xet
+objects.
 
 The exporters verify source revisions, exact category and entity counts,
 initialization contracts, content-addressed geometry and textures, and every

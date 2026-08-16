@@ -12,6 +12,10 @@ SOURCE=/path/to/PARC2026_pre
 BASE=/path/to/libero-eda-hosted-v1
 SCENES=/path/to/libero-evaluation-scenes-v1
 STAGING=/path/to/libero-eda-hosted-v2
+SPARSE_V2=/path/to/libero-eda-hosted-v2-metadata
+RECON_INPUT=/path/to/libero-plus-reconstruction-input
+RECON_OUTPUT=/path/to/libero-plus-reconstructions
+RELEASE=/path/to/libero-eda-hosted-v3-patch
 
 "$SOURCE/.venv-eda/bin/python" tools/export_hosted_data.py \
   --source-repo "$SOURCE" \
@@ -30,7 +34,24 @@ PYTHONPATH="$SOURCE/LIBERO-plus:$SOURCE" \
   --evaluation-scenes "$SCENES" \
   --output "$STAGING"
 
-"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$STAGING"
+"$SOURCE/.venv-eda/bin/python" tools/prepare_training_reconstructions.py \
+  --source-repo "$SOURCE" \
+  --output "$RECON_INPUT"
+
+LIBERO_CONFIG_PATH="$SOURCE/.parc/libero-original-eda" \
+MUJOCO_GL=egl \
+PYTHONPATH="$SOURCE/LIBERO:$SOURCE" \
+"$SOURCE/.venv-eval/bin/python" tools/simulate_training_reconstructions.py \
+  --source-repo "$SOURCE" \
+  --input "$RECON_INPUT" \
+  --output "$RECON_OUTPUT"
+
+"$SOURCE/.venv-eda/bin/python" tools/upgrade_hosted_data_v3.py \
+  --source-v2 "$STAGING" \
+  --reconstructions "$RECON_OUTPUT" \
+  --output "$RELEASE"
+
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$RELEASE"
 ```
 
 The exporter verifies pinned repositories, catalog revisions, entity counts,
@@ -43,6 +64,25 @@ the export stops if no placement succeeds within 100 attempts. The validator the
 hashes every distributed artifact, checks all 10,030 scene descriptors and all
 40 geometry packs, and verifies both the browser manifest and the separate
 integrity index.
+
+The training reconstruction stage hashes all 14,347 published action streams,
+requires unique exact matches for the Original-demo proxy path, and validates
+all remaining MuJoCo replays against the recorded EEF trajectory. Video and EEF
+series remain source data; reconstructed joints and object motion are stored in
+separate assets with explicit method and error metadata. No Plus-specific
+texture, light, camera, or hidden state is inferred.
+
+For a release derived from an already validated immutable v2 commit, download
+only its root manifest, integrity index, catalog indexes, and 130 task shards.
+Then add `--sparse-source` to the v3 command. The upgrader requires the complete
+v2 integrity index and stages a patch whose unchanged artifacts are inherited
+from that exact base commit; it does not silently omit them from the new
+integrity contract. Validate that patch independently before upload:
+
+```bash
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_patch.py "$RELEASE" \
+  --base-v2 "$SPARSE_V2"
+```
 
 ## 2. Publish the data snapshot
 
@@ -58,44 +98,56 @@ process identifiers while preserving the decompressed Arrow payload:
   --source-v1 "$BASE" \
   --evaluation-scenes "$SCENES" \
   --output "$STAGING"
-"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$STAGING"
+"$SOURCE/.venv-eda/bin/python" tools/upgrade_hosted_data_v3.py \
+  --source-v2 "$STAGING" \
+  --reconstructions "$RECON_OUTPUT" \
+  --output "$RELEASE"
+"$SOURCE/.venv-eda/bin/python" tools/validate_hosted_data.py "$RELEASE"
 ```
 
 Create a release branch from the last immutable snapshot. Upload new and
-rewritten artifacts first, the integrity index second to last, and the v2
+rewritten artifacts first, the integrity index second to last, and the v3
 manifest last. Until the final command, the branch continues to expose its
-inherited valid v1 manifest instead of a partial v2 release:
+inherited valid v2 manifest instead of a partial v3 release:
 
 ```bash
 DATA_REPO=ekunish/libero-eda-data
-DATA_BRANCH=v0.2.0-data
-BASE_REVISION=9146d9262c43a4dc10523d0c15baa83e01a2249f
+DATA_BRANCH=v0.3.0-data
+BASE_REVISION=cdbeebc91b28f96e8d7e4f79b0ca21094a2675ef
 
 hf repos branch create "$DATA_REPO" "$DATA_BRANCH" \
   --type dataset --revision "$BASE_REVISION"
-hf upload "$DATA_REPO" "$STAGING/evaluation-scenes" evaluation-scenes \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add evaluation scene assets'
-hf upload-large-folder "$DATA_REPO" "$STAGING" \
-  --type dataset --revision "$DATA_BRANCH" --include 'assets/series/**'
-hf upload "$DATA_REPO" "$STAGING/catalog/tasks" catalog/tasks \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Normalize replay timebases'
-hf upload "$DATA_REPO" "$STAGING/catalog/sources.json" catalog/sources.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Update source registry'
-hf upload "$DATA_REPO" "$STAGING/README.md" README.md \
+hf upload "$DATA_REPO" "$RELEASE/assets/reconstruction-scenes" assets/reconstruction-scenes \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add training scene proxies'
+hf upload "$DATA_REPO" "$RELEASE/assets/reconstruction-series" assets/reconstruction-series \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add reconstructed body motion'
+hf upload "$DATA_REPO" "$RELEASE/training-reconstructions" training-reconstructions \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Add reconstruction provenance'
+hf upload "$DATA_REPO" "$RELEASE/catalog/tasks" catalog/tasks \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Attach reconstruction metadata'
+hf upload "$DATA_REPO" "$RELEASE/catalog/sources.json" catalog/sources.json \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Clarify reconstruction sources'
+hf upload "$DATA_REPO" "$RELEASE/README.md" README.md \
   --type dataset --revision "$DATA_BRANCH" --commit-message 'Update data documentation'
-hf upload "$DATA_REPO" "$STAGING/DATA_LICENSES.md" DATA_LICENSES.md \
+hf upload "$DATA_REPO" "$RELEASE/DATA_LICENSES.md" DATA_LICENSES.md \
   --type dataset --revision "$DATA_BRANCH"
-hf upload "$DATA_REPO" "$STAGING/LICENSES" LICENSES \
+hf upload "$DATA_REPO" "$RELEASE/LICENSES" LICENSES \
   --type dataset --revision "$DATA_BRANCH"
-hf upload "$DATA_REPO" "$STAGING/integrity/artifacts.json" integrity/artifacts.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Seal v2 integrity index'
-hf upload "$DATA_REPO" "$STAGING/manifest.json" manifest.json \
-  --type dataset --revision "$DATA_BRANCH" --commit-message 'Publish hosted v2 manifest'
+hf upload "$DATA_REPO" "$RELEASE/integrity/artifacts.json" integrity/artifacts.json \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Seal v3 integrity index'
+hf upload "$DATA_REPO" "$RELEASE/manifest.json" manifest.json \
+  --type dataset --revision "$DATA_BRANCH" --commit-message 'Publish hosted v3 manifest'
 ```
 
 Do not configure the application with a mutable `main` URL. Record the
-40-character Hub commit produced by the final manifest upload, validate that
-exact revision, then create the `v0.2.0` data tag from it.
+40-character Hub commit produced by the final manifest upload, validate every
+indexed remote file against that exact revision, then create the `v0.3.0` data
+tag from it:
+
+```bash
+"$SOURCE/.venv-eval/bin/python" tools/validate_hosted_remote.py "$DATA_REPO" \
+  --revision "$FINAL_DATA_REVISION"
+```
 
 ## 3. Pin, verify, and deploy the app
 

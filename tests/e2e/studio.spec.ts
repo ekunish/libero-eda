@@ -357,6 +357,8 @@ test("Reduced motion freezes rainbow flow without removing trajectory semantics"
     page.getByRole("img", { name: /Rainbow motion is frozen by the reduced-motion preference/ }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+  await expect(page.getByTestId("reconstruction-inspector")).toBeVisible();
+  await expect(page.getByTestId("scene-model-loading")).toHaveCount(0, { timeout: 30_000 });
   const spatial = page.getByTestId("spatial-viewport");
   await page.waitForTimeout(500);
   const first = await spatial.screenshot();

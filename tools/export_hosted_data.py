@@ -569,6 +569,7 @@ def build_manifest(
         "series_asset_id": replay_asset_relative(
             "series", row["replay_id"], ".arrow.gz"
         ),
+        "scene_series_asset_id": None,
         "videos": exported_videos,
         "scene_asset_id": scene_id,
         "scene_hash": row["scene_hash"],
@@ -579,6 +580,7 @@ def build_manifest(
         else "This record does not include full MuJoCo body state.",
         "body_names": body_names,
         "scene_cameras": provenance.get("scene_cameras", []),
+        "scene_reconstruction": None,
         "outcome": outcome,
         "provenance": provenance,
     }

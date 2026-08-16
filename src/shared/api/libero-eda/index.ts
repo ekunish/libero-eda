@@ -23,6 +23,8 @@ export type {
   ReplayManifest,
   ReplaySeries,
   ReplayVideo,
+  SceneReconstruction,
+  SceneReconstructionMethod,
   SourceCount,
   TaskDetail,
   TaskEpisodes,

@@ -307,6 +307,7 @@ const originalManifest: ReplayManifest = {
   action_count: 4,
   action_horizon: null,
   series_asset_id: "series-original",
+  scene_series_asset_id: null,
   videos: [
     {
       camera: "agentview",
@@ -350,6 +351,7 @@ const originalManifest: ReplayManifest = {
       calibration_provenance: "Storybook fixed-camera fixture",
     },
   ],
+  scene_reconstruction: null,
   outcome: { success: true },
   provenance: { numeric_state_is_lossless: true },
 };
@@ -416,6 +418,39 @@ const plusManifest: ReplayManifest = {
   provenance: {
     digital_twin_available: false,
     digital_twin_reason: "The training dataset does not contain full MuJoCo body state",
+  },
+};
+
+const reconstructedPlusManifest: ReplayManifest = {
+  ...plusManifest,
+  replay_id: "demo-401",
+  source_episode_id: "401",
+  episode_id: 401,
+  scene_asset_id: "reconstructed-analysis-scene",
+  scene_series_asset_id: "reconstructed-scene-series",
+  scene_hash: "storybook-reconstructed-scene",
+  scene_schema: "parc-mujoco-scene/v3",
+  scene_fidelity: "analysis_approximate",
+  scene_fidelity_reason: "Task, action sequence, and length exactly match an Original demo",
+  body_names: originalManifest.body_names,
+  scene_cameras: [],
+  scene_reconstruction: {
+    schema_version: "libero-plus-training-scene-proxy/v1",
+    reconstruction_id: "original-proxy-original-libero-libero_spatial-005-00",
+    method: "original_action_match_proxy",
+    source_replay_id: originalManifest.replay_id,
+    source_action_sha256: "a".repeat(64),
+    appearance: "original_libero_canonical",
+    object_motion: "original_successful_demo_proxy",
+    goal_success: null,
+    metrics: {
+      position_rmse_m: 0.0064,
+      position_max_m: 0.019,
+      orientation_rmse_rad: 0.031,
+      gripper_mae: 0.0012,
+    },
+    reason:
+      "Task, action sequence, and length exactly match this successful Original LIBERO demo; the Original body motion is shown as a proxy.",
   },
 };
 
@@ -581,6 +616,7 @@ function handlers(
     manifestDelayMs?: number;
     manifests?: Record<string, ReplayManifest>;
     seriesDelayReplayId?: string;
+    sceneSeriesDelayMs?: number;
   } = {},
 ) {
   let sceneAttempts = 0;
@@ -610,6 +646,10 @@ function handlers(
         body_positions: withBodyState ? series.body_positions : [],
         body_quaternions: withBodyState ? series.body_quaternions : [],
       });
+    }),
+    http.get("/api/v1/replays/:replayId/scene-series", async () => {
+      if (sceneOptions.sceneSeriesDelayMs) await delay(sceneOptions.sceneSeriesDelayMs);
+      return HttpResponse.json(series);
     }),
     http.get("/api/v1/datasets/lerobot_libero_plus/training-environment-categories", () =>
       HttpResponse.json({
@@ -905,7 +945,7 @@ export const LiberoPlusEefOnly: Story = {
     await expect(
       canvas.getByRole("button", { name: /Reset Front \/ agentview orientation/ }),
     ).toBeEnabled();
-    await expect(canvas.getByRole("navigation", { name: "Filtered records" })).toBeVisible();
+    await expect(await canvas.findByRole("navigation", { name: "Filtered records" })).toBeVisible();
     await expect(await canvas.findByTestId("task-definition-inspector")).toHaveTextContent(
       "Source task definition (BDDL)",
     );
@@ -947,6 +987,37 @@ export const LiberoPlusEefOnly: Story = {
       await expect(Math.abs(video.height - spatial.height)).toBeLessThan(8);
       await expect(document.documentElement.scrollHeight).toBeLessThanOrEqual(window.innerHeight);
     }
+  },
+};
+
+export const LiberoPlusApproximateReconstruction: Story = {
+  args: { replayId: reconstructedPlusManifest.replay_id },
+  parameters: {
+    msw: {
+      handlers: handlers(
+        reconstructedPlusManifest,
+        false,
+        replayContext(reconstructedPlusManifest),
+        { sceneSeriesDelayMs: 500 },
+      ),
+    },
+  },
+  globals: { viewport: { value: "desktop2k", isRotated: false } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("Loading approximate 3D")).toBeVisible();
+    await expect(await canvas.findByTestId("scene-model-loading")).toBeVisible();
+    const inspector = await canvas.findByTestId("reconstruction-inspector");
+    await expect(inspector).toHaveTextContent("Matched Original demo");
+    await expect(inspector).toHaveTextContent("RMSE 6.4 mm");
+    await expect(inspector).toHaveTextContent(
+      "textures, lighting, and camera parameters are not recovered",
+    );
+    await expect(canvas.getByRole("button", { name: "Front sync" })).toBeDisabled();
+    await waitFor(() => expect(canvas.queryByTestId("scene-model-loading")).toBeNull(), {
+      timeout: 3_000,
+    });
+    await expect(canvas.getByText("Approximate 3D")).toBeVisible();
   },
 };
 

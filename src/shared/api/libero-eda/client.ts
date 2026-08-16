@@ -22,7 +22,7 @@ import { type EvaluationCategory, evaluationCategorySchema } from "./evaluation-
 import { validateHostedManifestUrl } from "./manifest-url";
 
 const DEFAULT_MANIFEST_URL =
-  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/cdbeebc91b28f96e8d7e4f79b0ca21094a2675ef/manifest.json";
+  "https://huggingface.co/datasets/ekunish/libero-eda-data/resolve/d0707eeceeac4680f1decd5f434160afca9b134b/manifest.json";
 const manifestUrl = validateHostedManifestUrl(
   process.env.NEXT_PUBLIC_LIBERO_EDA_DATA_MANIFEST ?? DEFAULT_MANIFEST_URL,
 );
@@ -40,7 +40,7 @@ const relativeArtifactSchema = z
   );
 
 const manifestSchema = z.object({
-  schema_version: z.literal("libero-eda-hosted/v2"),
+  schema_version: z.literal("libero-eda-hosted/v3"),
   revision: z.string().min(1),
   generated_at: z.string().min(1),
   catalog: z.object({
@@ -60,6 +60,15 @@ const manifestSchema = z.object({
     original_episodes: z.literal(6500),
     plus_training_episodes: z.literal(14347),
     evaluation_conditions: z.literal(10030),
+  }),
+  training_reconstructions: z.object({
+    schema_version: z.literal("libero-plus-training-scene-proxy/v1"),
+    source_manifest: relativeArtifactSchema,
+    plus_episodes: z.literal(14347),
+    exact_action_matches: z.literal(12609),
+    simulated_or_unavailable_episodes: z.literal(1738),
+    unique_reconstructions: z.literal(207),
+    methods: z.record(z.string(), z.number().int().nonnegative()),
   }),
   integrity: z.object({
     index: z.literal("integrity/artifacts.json"),
@@ -974,18 +983,18 @@ function decodeShape(flat: number[], shape: number[]): unknown[] {
   );
 }
 
-async function replaySeries(replayId: string): Promise<ReplaySeries> {
+async function decodeSeriesAsset(assetId: string, identity: string): Promise<ReplaySeries> {
   if (!("DecompressionStream" in globalThis))
     throw new ApiError("This browser cannot decode hosted gzip series", 409, null);
-  const response = await fetch(staticDataUrl(replayAssetPath("series", replayId, ".arrow.gz")));
+  const response = await fetch(staticDataUrl(assetId));
   if (!response.ok || !response.body)
-    throw new ApiError(`Series request failed: ${response.status}`, response.status, replayId);
+    throw new ApiError(`Series request failed: ${response.status}`, response.status, identity);
   const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
   const ipc = await new Response(stream).arrayBuffer();
   const table = tableFromIPC(new Uint8Array(ipc));
   const shapesRaw = table.getChild("shapes")?.get(0);
   if (typeof shapesRaw !== "string")
-    throw new ApiError("Series shape metadata is missing", 409, replayId);
+    throw new ApiError("Series shape metadata is missing", 409, identity);
   const shapes = JSON.parse(shapesRaw) as Record<string, number[]>;
   const jsonRaw = table.getChild("json")?.get(0);
   const json = typeof jsonRaw === "string" ? (JSON.parse(jsonRaw) as Record<string, unknown>) : {};
@@ -1020,6 +1029,20 @@ async function replaySeries(replayId: string): Promise<ReplaySeries> {
     acceleration: floats("acceleration") as number[],
     jerk: floats("jerk") as number[],
   };
+}
+
+async function replaySeries(replayId: string): Promise<ReplaySeries> {
+  return decodeSeriesAsset(replayAssetPath("series", replayId, ".arrow.gz"), replayId);
+}
+
+async function replaySceneSeries(replayId: string): Promise<ReplaySeries> {
+  const episode = await hostedEpisode(replayId);
+  const assetId = episode.manifest.scene_series_asset_id;
+  if (!assetId) throw new ApiError("This replay has no reconstructed scene motion", 404, replayId);
+  return decodeSeriesAsset(
+    assetId,
+    episode.manifest.scene_reconstruction?.reconstruction_id ?? replayId,
+  );
 }
 
 async function dispatch(path: string): Promise<unknown> {
@@ -1083,6 +1106,8 @@ async function dispatch(path: string): Promise<unknown> {
     return withoutTrack1(detail);
   }
   if (parts[0] === "replays" && parts[1] && parts[2] === "series") return replaySeries(parts[1]);
+  if (parts[0] === "replays" && parts[1] && parts[2] === "scene-series")
+    return replaySceneSeries(parts[1]);
   if (parts[0] === "replays" && parts[1] && parts[2] === "context")
     return replayContext(parts[1], url.searchParams);
   if (parts[0] === "replays" && parts[1]) return (await hostedEpisode(parts[1])).manifest;

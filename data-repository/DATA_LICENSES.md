@@ -12,6 +12,8 @@ demonstrations distributed by `yifengzhu-hf/LIBERO-datasets` at revision
 - Original-LIBERO entries under `assets/series/`
 - Original-LIBERO entries under `assets/thumbnails/`
 - `assets/scenes/`
+- `assets/reconstruction-scenes/`
+- body and object state in `assets/reconstruction-series/`
 - corresponding catalog metadata
 
 The reconstructed GLB scenes also contain geometry and textures from the

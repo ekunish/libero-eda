@@ -480,6 +480,7 @@ def validate_replay_manifest(
     task_key: str,
     plus_revision: str,
     *,
+    hosted_schema: str,
     allow_legacy_plus_timebase: bool,
 ) -> None:
     replay_id = record.get("replay_id")
@@ -492,6 +493,94 @@ def validate_replay_manifest(
         raise RuntimeError(f"replay task identity mismatch: {replay_id}")
     if replay.get("state_count") != record.get("length"):
         raise RuntimeError(f"replay state count mismatch: {replay_id}")
+    if hosted_schema == "libero-eda-hosted/v3":
+        if (
+            "scene_series_asset_id" not in replay
+            or "scene_reconstruction" not in replay
+        ):
+            raise RuntimeError(
+                f"v3 replay reconstruction fields are missing: {replay_id}"
+            )
+        if dataset_id == "original_libero":
+            if (
+                replay["scene_series_asset_id"] is not None
+                or replay["scene_reconstruction"] is not None
+            ):
+                raise RuntimeError(
+                    f"Original replay must not claim reconstruction metadata: {replay_id}"
+                )
+        else:
+            reconstruction = replay["scene_reconstruction"]
+            if not isinstance(reconstruction, dict):
+                raise RuntimeError(
+                    f"Plus reconstruction metadata is missing: {replay_id}"
+                )
+            required = {
+                "schema_version",
+                "reconstruction_id",
+                "method",
+                "source_replay_id",
+                "source_action_sha256",
+                "appearance",
+                "object_motion",
+                "goal_success",
+                "metrics",
+                "reason",
+            }
+            methods = {
+                "original_action_match_proxy",
+                "mujoco_action_replay",
+                "mujoco_osc_retarget",
+                "mujoco_osc_robot_only",
+                "unavailable",
+            }
+            if (
+                set(reconstruction) != required
+                or reconstruction.get("schema_version")
+                != "libero-plus-training-scene-proxy/v1"
+                or reconstruction.get("method") not in methods
+                or not isinstance(reconstruction.get("reconstruction_id"), str)
+                or not isinstance(reconstruction.get("source_replay_id"), str)
+                or not SHA256_PATTERN.fullmatch(
+                    str(reconstruction.get("source_action_sha256"))
+                )
+                or not isinstance(reconstruction.get("reason"), str)
+                or not reconstruction["reason"]
+            ):
+                raise RuntimeError(
+                    f"Plus reconstruction metadata is invalid: {replay_id}"
+                )
+            metrics = reconstruction.get("metrics")
+            if (
+                not isinstance(metrics, dict)
+                or set(metrics)
+                != {
+                    "position_rmse_m",
+                    "position_max_m",
+                    "orientation_rmse_rad",
+                    "gripper_mae",
+                }
+                or any(
+                    not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    or value < 0
+                    for value in metrics.values()
+                )
+            ):
+                raise RuntimeError(
+                    f"Plus reconstruction metrics are invalid: {replay_id}"
+                )
+            available = reconstruction["method"] != "unavailable"
+            if available != bool(replay.get("scene_asset_id")) or available != bool(
+                replay.get("scene_series_asset_id")
+            ):
+                raise RuntimeError(
+                    f"Plus reconstruction asset state is inconsistent: {replay_id}"
+                )
+            if replay.get("scene_cameras") != []:
+                raise RuntimeError(
+                    f"Plus proxy must not claim camera calibration: {replay_id}"
+                )
     fps = replay.get("fps")
     if not isinstance(fps, (int, float)) or not math.isfinite(fps) or fps <= 0:
         raise RuntimeError(f"invalid replay fps: {replay_id}")
@@ -554,9 +643,7 @@ def validate_replay_manifest(
             canonical_timebase = (
                 start == 0.0
                 and offset == 0
-                and math.isclose(
-                    end, expected_duration, rel_tol=0, abs_tol=1e-9
-                )
+                and math.isclose(end, expected_duration, rel_tol=0, abs_tol=1e-9)
             )
             legacy_global_timebase = (
                 allow_legacy_plus_timebase
@@ -601,6 +688,11 @@ def main() -> None:
         action="store_true",
         help="Allow a legacy v1 input only for the one-way v2 migration tool.",
     )
+    parser.add_argument(
+        "--allow-v2",
+        action="store_true",
+        help="Allow hosted v2 only as input to the one-way v3 migration tool.",
+    )
     args = parser.parse_args()
     root = args.root.resolve(strict=True)
     reject_symlinks(root, "hosted export")
@@ -609,11 +701,19 @@ def main() -> None:
         raise RuntimeError("hosted manifest is missing")
     manifest = load_json(manifest_path)
     schema_version = manifest.get("schema_version")
-    if schema_version not in {"libero-eda-hosted/v1", "libero-eda-hosted/v2"}:
+    if schema_version not in {
+        "libero-eda-hosted/v1",
+        "libero-eda-hosted/v2",
+        "libero-eda-hosted/v3",
+    }:
         raise RuntimeError("manifest schema mismatch")
     if schema_version == "libero-eda-hosted/v1" and not args.allow_v1:
         raise RuntimeError(
             "legacy v1 exports are migration inputs, not publishable releases"
+        )
+    if schema_version == "libero-eda-hosted/v2" and not args.allow_v2:
+        raise RuntimeError(
+            "hosted v2 exports are migration inputs, not publishable releases"
         )
     if manifest.get("counts") != EXPECTED:
         raise RuntimeError(f"manifest counts mismatch: {manifest.get('counts')}")
@@ -714,6 +814,7 @@ def main() -> None:
         raise RuntimeError(f"episode dataset counts mismatch: {dataset_counts}")
 
     shard_replay_ids: set[str] = set()
+    replay_manifest_by_id: dict[str, dict[str, Any]] = {}
     for task_key, relative in catalog["task_shards"].items():
         shard = load_json(root / relative)
         if shard.get("task_key") != task_key:
@@ -750,11 +851,13 @@ def main() -> None:
                     replay,
                     task_key,
                     plus_revision,
+                    hosted_schema=schema_version,
                     allow_legacy_plus_timebase=(
                         schema_version == "libero-eda-hosted/v1"
                     ),
                 )
                 shard_replay_ids.add(replay_id)
+                replay_manifest_by_id[replay_id] = replay
     if shard_replay_ids != set(episode_by_id):
         raise RuntimeError(
             "task shard replay set mismatch: "
@@ -768,8 +871,145 @@ def main() -> None:
     ):
         raise RuntimeError("competition-specific source leaked into public export")
 
+    reconstruction_counts = None
+    if schema_version == "libero-eda-hosted/v3":
+        top = manifest.get("training_reconstructions")
+        if (
+            not isinstance(top, dict)
+            or top.get("schema_version") != "libero-plus-training-scene-proxy/v1"
+            or top.get("plus_episodes") != EXPECTED["plus_training_episodes"]
+            or top.get("exact_action_matches") != 12_609
+            or top.get("simulated_or_unavailable_episodes") != 1_738
+            or top.get("unique_reconstructions") != 207
+        ):
+            raise RuntimeError("training reconstruction release contract mismatch")
+        provenance_relative = top.get("source_manifest")
+        provenance_path = safe_artifact(root, provenance_relative)
+        provenance = load_json(provenance_path)
+        if (
+            provenance.get("schema_version")
+            != "libero-plus-training-reconstructions/v1"
+            or provenance.get("status") != "complete"
+            or provenance.get("counts", {}).get("plus_episodes")
+            != EXPECTED["plus_training_episodes"]
+            or provenance.get("counts", {}).get("unique_reconstructions") != 207
+        ):
+            raise RuntimeError("training reconstruction provenance mismatch")
+        provenance_root = provenance_path.parent
+        mapping_record = provenance.get("mappings")
+        reconstruction_record = provenance.get("reconstructions")
+        if not isinstance(mapping_record, dict) or not isinstance(
+            reconstruction_record, dict
+        ):
+            raise RuntimeError("training reconstruction indexes are missing")
+        mapping_path = safe_artifact(
+            root,
+            (provenance_root / mapping_record.get("path", ""))
+            .relative_to(root)
+            .as_posix(),
+        )
+        reconstruction_path = safe_artifact(
+            root,
+            (provenance_root / reconstruction_record.get("path", ""))
+            .relative_to(root)
+            .as_posix(),
+        )
+        if (
+            mapping_path.stat().st_size != mapping_record.get("bytes")
+            or digest(mapping_path) != mapping_record.get("sha256")
+            or reconstruction_path.stat().st_size != reconstruction_record.get("bytes")
+            or digest(reconstruction_path) != reconstruction_record.get("sha256")
+        ):
+            raise RuntimeError("training reconstruction index integrity mismatch")
+        mappings = load_json(mapping_path)
+        reconstructions = load_json(reconstruction_path)
+        if (
+            not isinstance(mappings, list)
+            or len(mappings) != EXPECTED["plus_training_episodes"]
+            or not isinstance(reconstructions, list)
+            or len(reconstructions) != 207
+        ):
+            raise RuntimeError("training reconstruction index count mismatch")
+        mapping_by_id = {item.get("replay_id"): item for item in mappings}
+        if len(mapping_by_id) != len(mappings):
+            raise RuntimeError("duplicate training reconstruction mapping")
+        plus_manifests = {
+            replay_id: replay
+            for replay_id, replay in replay_manifest_by_id.items()
+            if replay.get("dataset_id") == "lerobot_libero_plus"
+        }
+        original_manifests = {
+            replay_id: replay
+            for replay_id, replay in replay_manifest_by_id.items()
+            if replay.get("dataset_id") == "original_libero"
+        }
+        if set(mapping_by_id) != set(plus_manifests):
+            raise RuntimeError("training reconstruction replay coverage mismatch")
+        methods: Counter[str] = Counter()
+        for replay_id, replay in plus_manifests.items():
+            reconstruction = replay["scene_reconstruction"]
+            mapping = mapping_by_id[replay_id]
+            method = reconstruction["method"]
+            methods[method] += 1
+            for key in (
+                "reconstruction_id",
+                "method",
+                "source_replay_id",
+                "source_action_sha256",
+                "appearance",
+                "object_motion",
+            ):
+                if reconstruction[key] != mapping.get(key):
+                    raise RuntimeError(
+                        f"published reconstruction differs from provenance: {replay_id}/{key}"
+                    )
+            mapping_metrics = mapping.get("metrics")
+            if not isinstance(mapping_metrics, dict) or reconstruction["metrics"] != {
+                key: mapping_metrics.get(key)
+                for key in (
+                    "position_rmse_m",
+                    "position_max_m",
+                    "orientation_rmse_rad",
+                    "gripper_mae",
+                )
+            }:
+                raise RuntimeError(
+                    f"published reconstruction differs from provenance: {replay_id}/metrics"
+                )
+            source_replay = original_manifests.get(reconstruction["source_replay_id"])
+            if not source_replay or source_replay.get("task_key") != replay.get(
+                "task_key"
+            ):
+                raise RuntimeError(f"reconstruction source task mismatch: {replay_id}")
+            if method == "original_action_match_proxy" and (
+                replay.get("scene_asset_id") != source_replay.get("scene_asset_id")
+                or replay.get("scene_series_asset_id")
+                != source_replay.get("series_asset_id")
+                or replay.get("body_names") != source_replay.get("body_names")
+            ):
+                raise RuntimeError(
+                    f"exact Original proxy contract mismatch: {replay_id}"
+                )
+            for relative in (
+                replay.get("scene_asset_id"),
+                replay.get("scene_series_asset_id"),
+            ):
+                if relative is not None:
+                    if relative not in artifacts:
+                        raise RuntimeError(
+                            f"reconstruction asset is not indexed: {replay_id}/{relative}"
+                        )
+                    safe_artifact(root, relative)
+        reconstruction_counts = dict(sorted(methods.items()))
+        if reconstruction_counts != top.get(
+            "methods"
+        ) or reconstruction_counts != provenance.get("counts", {}).get(
+            "episode_methods"
+        ):
+            raise RuntimeError("training reconstruction method counts mismatch")
+
     evaluation_scene_counts = None
-    if schema_version == "libero-eda-hosted/v2":
+    if schema_version in {"libero-eda-hosted/v2", "libero-eda-hosted/v3"}:
         evaluation_scene_counts = validate_evaluation_scenes(root, manifest, catalog)
 
     samples = [episodes[0]["replay_id"], episodes[-1]["replay_id"]]
@@ -788,6 +1028,7 @@ def main() -> None:
         "episodes": dataset_counts,
         "sources": sum(len(group["sources"]) for group in sources["groups"]),
         "evaluation_scenes": evaluation_scene_counts,
+        "training_reconstructions": reconstruction_counts,
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
 

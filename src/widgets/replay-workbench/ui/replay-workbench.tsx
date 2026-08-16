@@ -683,6 +683,7 @@ type SceneModelLoadState = {
 function TrajectoryScene({
   manifest,
   series,
+  sceneSeries,
   frame,
   showTwin,
   cameraMode,
@@ -696,6 +697,7 @@ function TrajectoryScene({
 }: {
   manifest: ReplayManifest;
   series: ReplaySeries;
+  sceneSeries: ReplaySeries;
   frame: number;
   showTwin: boolean;
   cameraMode: "front" | "oblique";
@@ -785,7 +787,7 @@ function TrajectoryScene({
           position={[0, 0, 0]}
         />
       ) : null}
-      {showTwin && manifest.scene_asset_id && series.body_positions.length ? (
+      {showTwin && manifest.scene_asset_id && sceneSeries.body_positions.length ? (
         <SceneModelErrorBoundary
           key={`${manifest.scene_asset_id}-${sceneAttempt}`}
           onError={onSceneError}
@@ -793,7 +795,7 @@ function TrajectoryScene({
           <Suspense fallback={null}>
             <DigitalTwin
               manifest={manifest}
-              series={series}
+              series={sceneSeries}
               frame={frame}
               taskCueBodies={taskCueBodies}
               taskCuesEnabled={taskCuesEnabled}
@@ -1193,6 +1195,86 @@ function ReplayWorkbenchSkeleton() {
   );
 }
 
+const RECONSTRUCTION_METHOD_LABELS: Record<
+  NonNullable<ReplayManifest["scene_reconstruction"]>["method"],
+  string
+> = {
+  original_action_match_proxy: "Matched Original demo",
+  mujoco_action_replay: "MuJoCo action replay",
+  mujoco_osc_retarget: "MuJoCo OSC retarget",
+  mujoco_osc_robot_only: "OSC robot-only proxy",
+  unavailable: "Unavailable",
+};
+
+function ReconstructionInspector({ manifest }: { manifest: ReplayManifest }) {
+  const reconstruction = manifest.scene_reconstruction;
+  if (!reconstruction) return null;
+  const metrics = reconstruction.metrics;
+  const objectMotion =
+    reconstruction.object_motion === "original_successful_demo_proxy"
+      ? "Matched Original demo motion"
+      : reconstruction.object_motion === "mujoco_simulated"
+        ? "Re-simulated in canonical scene"
+        : reconstruction.object_motion === "static_canonical"
+          ? "Canonical initial state only"
+          : "Not published";
+  return (
+    <section className="border-b border-base-300 p-3" data-testid="reconstruction-inspector">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-base-content/55">
+          3D reconstruction
+        </h2>
+        <Badge tone={reconstruction.method === "unavailable" ? "neutral" : "violet"}>
+          Approximate
+        </Badge>
+      </div>
+      <dl className="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-2 gap-y-1.5 text-xs">
+        <dt className="text-base-content/45">Method</dt>
+        <dd>{RECONSTRUCTION_METHOD_LABELS[reconstruction.method]}</dd>
+        <dt className="text-base-content/45">Appearance</dt>
+        <dd>
+          {reconstruction.appearance === "original_libero_canonical"
+            ? "Canonical Original LIBERO"
+            : "Not available"}
+        </dd>
+        <dt className="text-base-content/45">Object motion</dt>
+        <dd>{objectMotion}</dd>
+        <dt className="text-base-content/45">Source record</dt>
+        <dd className="mono truncate" title={reconstruction.source_replay_id}>
+          {reconstruction.source_replay_id}
+        </dd>
+        {reconstruction.goal_success !== null ? (
+          <>
+            <dt className="text-base-content/45">Goal check</dt>
+            <dd>{reconstruction.goal_success ? "Satisfied" : "Not satisfied"}</dd>
+          </>
+        ) : null}
+        {metrics ? (
+          <>
+            <dt className="text-base-content/45">EEF error</dt>
+            <dd className="mono">
+              RMSE {(metrics.position_rmse_m * 1000).toFixed(1)} mm · max{" "}
+              {(metrics.position_max_m * 1000).toFixed(1)} mm
+            </dd>
+            <dt className="text-base-content/45">Rotation</dt>
+            <dd className="mono">
+              RMSE {((metrics.orientation_rmse_rad * 180) / Math.PI).toFixed(1)}°
+            </dd>
+            <dt className="text-base-content/45">Gripper</dt>
+            <dd className="mono">MAE {metrics.gripper_mae.toFixed(4)}</dd>
+          </>
+        ) : null}
+      </dl>
+      <p className="mt-3 text-xs leading-5 text-base-content/60">
+        The video and EEF trajectory are recorded source data. Robot joints and object motion are
+        reconstructed in the canonical Original LIBERO scene; LIBERO-Plus textures, lighting, and
+        camera parameters are not recovered.
+      </p>
+      <p className="mt-2 text-xs leading-5 text-base-content/60">{reconstruction.reason}</p>
+    </section>
+  );
+}
+
 export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1214,6 +1296,16 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const displayedReplayId = workspaceQuery.data?.replayId ?? replayId;
   const displayedManifest = workspaceQuery.data?.manifest;
   const displayedSeries = workspaceQuery.data?.series;
+  const sceneSeriesQuery = useQuery({
+    queryKey: ["replay-scene-series", displayedReplayId, displayedManifest?.scene_series_asset_id],
+    queryFn: () => api<ReplaySeries>(`/replays/${displayedReplayId}/scene-series`),
+    enabled: Boolean(displayedManifest?.scene_series_asset_id),
+    staleTime: Infinity,
+  });
+  const refetchSceneSeries = sceneSeriesQuery.refetch;
+  const displayedSceneSeries = displayedManifest?.scene_series_asset_id
+    ? sceneSeriesQuery.data
+    : displayedSeries;
   const canonicalReplayParams = useMemo(
     () =>
       workspaceReadyForRoute && displayedManifest
@@ -1259,7 +1351,11 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [timelineOpen, setTimelineOpen] = useState(true);
   const hasTwin = Boolean(
-    displayedManifest?.scene_asset_id && displayedSeries?.body_positions.length,
+    displayedManifest?.scene_asset_id && displayedSceneSeries?.body_positions.length,
+  );
+  const hasSceneCandidate = Boolean(
+    displayedManifest?.scene_asset_id &&
+      (displayedManifest.scene_series_asset_id || displayedSeries?.body_positions.length),
   );
   const taskDetailQuery = useQuery({
     queryKey: ["task-detail", displayedManifest?.task_key],
@@ -1293,11 +1389,12 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const sceneModelPhase = sceneAssetId ? (currentSceneModelLoad?.phase ?? "loading") : null;
   const sceneAttempt = currentSceneModelLoad?.attempt ?? 0;
   const hasAgentviewCalibration = Boolean(
-    displayedManifest?.scene_cameras.some(
-      (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
-    ),
+    !displayedManifest?.scene_reconstruction &&
+      displayedManifest?.scene_cameras.some(
+        (camera) => camera.camera === "agentview" && camera.scope === "fixed_world",
+      ),
   );
-  const view = selectedView ?? (hasTwin ? "scene" : "trajectory");
+  const view = selectedView ?? (hasSceneCandidate ? "scene" : "trajectory");
   const cameraMode = selectedCameraMode ?? (hasAgentviewCalibration ? "front" : "oblique");
   const handleSceneReady = useCallback(() => {
     if (!sceneAssetId) return;
@@ -1323,13 +1420,14 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   const retrySceneModel = useCallback(() => {
     if (!sceneAssetId) return;
     useGLTF.clear(mediaUrl(sceneAssetId));
+    if (displayedManifest?.scene_series_asset_id) void refetchSceneSeries();
     setSceneModelLoad((current) => ({
       assetId: sceneAssetId,
       phase: "loading",
       attempt: (current?.assetId === sceneAssetId ? current.attempt : 0) + 1,
       error: null,
     }));
-  }, [sceneAssetId]);
+  }, [displayedManifest?.scene_series_asset_id, refetchSceneSeries, sceneAssetId]);
   useEffect(() => {
     if (displayedManifest) configure(displayedManifest.state_count - 1, displayedManifest.fps);
     return () => usePlayback.getState().reset();
@@ -1396,6 +1494,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
   if (!displayedManifest || !displayedSeries) return <ReplayWorkbenchSkeleton />;
   const manifest = displayedManifest;
   const series = displayedSeries;
+  const sceneSeries = displayedSceneSeries ?? displayedSeries;
   const videos = manifest.videos.filter(hasRecordedVideoDimensions);
   if (videos.length !== manifest.videos.length) {
     return (
@@ -1527,7 +1626,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         >
           {[
             { id: "trajectory", label: "Trajectory", icon: Rotate3D },
-            { id: "scene", label: "Scene", icon: Layers3, disabled: !hasTwin },
+            { id: "scene", label: "Scene", icon: Layers3, disabled: !hasSceneCandidate },
             { id: "projection", label: "World XY / XZ", icon: Grid3X3 },
           ].map((item) => (
             <button
@@ -1551,9 +1650,13 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             </button>
           ))}
         </div>
-        {!hasTwin ? (
+        {!hasSceneCandidate ? (
           <span className="ml-auto hidden items-center gap-1 text-xs text-base-content/55 2xl:flex">
             <Gauge size={12} /> EEF only
+          </span>
+        ) : !hasTwin ? (
+          <span className="ml-auto hidden items-center gap-1 text-xs text-base-content/55 2xl:flex">
+            <span aria-hidden className="loading loading-spinner loading-xs" /> Loading scene motion
           </span>
         ) : null}
       </div>
@@ -1561,7 +1664,11 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
         id="spatial-view-panel"
         role="tabpanel"
         aria-labelledby={`spatial-tab-${view}`}
-        aria-busy={view === "scene" && hasTwin && sceneModelPhase === "loading"}
+        aria-busy={
+          view === "scene" &&
+          hasSceneCandidate &&
+          (!hasTwin || sceneSeriesQuery.isLoading || sceneModelPhase === "loading")
+        }
         data-testid="spatial-viewport"
         className="relative min-h-0 flex-1 bg-[var(--bg-raised)]"
       >
@@ -1573,6 +1680,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           <TrajectoryScene
             manifest={manifest}
             series={series}
+            sceneSeries={sceneSeries}
             frame={frame}
             showTwin={view === "scene"}
             cameraMode={cameraMode}
@@ -1585,7 +1693,10 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             onSceneError={handleSceneError}
           />
         )}
-        {view === "scene" && hasTwin && sceneModelPhase === "loading" ? (
+        {view === "scene" &&
+        hasSceneCandidate &&
+        !sceneSeriesQuery.isError &&
+        (!hasTwin || sceneSeriesQuery.isLoading || sceneModelPhase === "loading") ? (
           <div
             role="status"
             aria-live="polite"
@@ -1596,7 +1707,9 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             Loading robot and scene…
           </div>
         ) : null}
-        {view === "scene" && hasTwin && sceneModelPhase === "error" ? (
+        {view === "scene" &&
+        hasSceneCandidate &&
+        (sceneSeriesQuery.isError || sceneModelPhase === "error") ? (
           <div
             role="alert"
             data-testid="scene-model-error"
@@ -1606,7 +1719,11 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
               <strong className="block font-semibold">Scene model failed to load.</strong>
               <span
                 className="block truncate text-base-content/55"
-                title={currentSceneModelLoad?.error?.message}
+                title={
+                  sceneSeriesQuery.error instanceof Error
+                    ? sceneSeriesQuery.error.message
+                    : currentSceneModelLoad?.error?.message
+                }
               >
                 The trajectory is still available.
               </span>
@@ -1803,6 +1920,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             <dd className="mono">{formatDuration((manifest.state_count - 1) / manifest.fps)}</dd>
           </dl>
         </section>
+        <ReconstructionInspector manifest={manifest} />
         {manifest.task_key ? (
           taskDetailQuery.isError ? (
             <section className="border-b border-base-300 p-3">
@@ -1919,7 +2037,7 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
           <Badge tone={manifest.source === "dataset" ? "green" : "cyan"}>{recordingLabel}</Badge>
           <Badge
             tone={
-              hasTwin
+              hasSceneCandidate
                 ? manifest.scene_fidelity === "recording_render_matched"
                   ? "green"
                   : "violet"
@@ -1927,10 +2045,12 @@ export function ReplayWorkbench({ replayId }: { replayId: string }) {
             }
           >
             <Layers3 size={11} />
-            {hasTwin
+            {hasSceneCandidate
               ? manifest.scene_fidelity === "recording_render_matched"
                 ? "MuJoCo-matched 3D"
-                : "Approximate 3D"
+                : hasTwin
+                  ? "Approximate 3D"
+                  : "Loading approximate 3D"
               : "EEF trajectory only"}
           </Badge>
           <h1 className="truncate text-sm font-semibold" title={manifest.task_name}>

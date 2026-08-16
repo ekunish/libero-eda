@@ -24,6 +24,8 @@ This repository contains:
 - gzip-compressed Arrow IPC trajectory series;
 - 128 x 128 WebP thumbnails;
 - derived Original LIBERO MP4 and MuJoCo GLB assets;
+- canonical Original LIBERO scene proxies and offline MuJoCo body-motion
+  reconstructions for LIBERO-Plus training replay;
 - content-addressed LIBERO-Plus evaluation geometry and source textures, plus
   numeric initial-state scene descriptors for all 10,030 evaluation conditions.
 
@@ -55,6 +57,18 @@ The public LIBERO-Plus files are one MP4 per episode, so hosted v2 manifests
 use a zero-based interval from `0` to `state_count / 20`. The one-way v1-to-v2
 migration verifies the older chunk-global interval length before normalizing
 it; video bytes are neither copied nor modified.
+
+Hosted v3 adds approximate 3D context for all LIBERO-Plus training records.
+12,609 of 14,347 episodes have a unique exact task, length, and float32 action
+sequence match to a successful Original LIBERO demonstration; those records
+reuse that demonstration's canonical scene and body motion as a proxy. The
+remaining 1,738 episodes collapse to 207 unique action sequences and are
+replayed offline through the pinned Original LIBERO MuJoCo environment. Results
+are published only with their reconstruction method, source record, validation
+metrics, and goal status. A failed reconstruction remains explicitly
+unavailable. The Plus video and EEF trajectory are never replaced. These proxy
+scenes do not recover the training record's Plus-specific textures, lighting,
+camera settings, or hidden simulator state.
 
 Evaluation scenes are interactive initial states, not screenshots, videos, or
 successful trajectories. Geometry is shared per Original LIBERO source task,
